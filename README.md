@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ProfitXIV
 
-## Getting Started
+**ProfitXIV** is a lightweight web tool designed to optimize gil-making in Final Fantasy XIV by identifying the most profitable items to craft and resell in real time.
 
-First, run the development server:
+The application analyzes marketboard prices across servers and calculates potential profit margins based on crafting costs, material prices, and current sell values — all without storing any data in a database.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+This project is built for fun and personal gameplay optimization.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Features
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Retrieve real-time marketboard prices for items across multiple servers  
+- Identify items with the highest resale value
+- Fully client-driven with no database  
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## How it works
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+ProfitXIV fetches marketboard data from a public FFXIV API and performs all calculations on demand.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+For each item:
+1. Current sell prices are retrieved per server  
+2. Crafting recipe and required materials are analyzed (for the v2)
+3. Material costs are calculated using current market prices
+4. Final profit margin is computed
+5. Items are ranked by profitability
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Tech Stack
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Next.js  
+- TypeScript  
+- TailwindCSS 
+- Shadcn/ui
+- [Universalis API](https://docs.universalis.app/)
+
+---
+
+## Disclaimer
+
+This project is a personal tool created for gameplay optimization and experimentation.  
+All data belongs to their respective sources and APIs.
