@@ -44,6 +44,10 @@ export interface UniversalisApi {
   ) => Promise<unknown>;
   getTaxRates: (world: string) => Promise<unknown>;
   getMarketableItems: () => Promise<number[]>;
+  getMostRecentlyUpdated: (
+    dcName: string,
+    params?: { entries?: number }
+  ) => Promise<{ itemID: number; worldID: number; worldName?: string }[]>;
 }
 
 export const universalis: UniversalisApi = {
@@ -113,5 +117,14 @@ export const universalis: UniversalisApi = {
       `/${API_VERSION}/marketable`
     );
     return data;
+  },
+
+  getMostRecentlyUpdated: async (dcName: string, params) => {
+    const { data } = await universalisClient.get<{
+      items: { itemID: number; worldID: number; worldName?: string }[];
+    }>(`/${API_VERSION}/extra/stats/most-recently-updated`, {
+      params: { dcName, entries: params?.entries ?? 100 },
+    });
+    return data.items;
   },
 };

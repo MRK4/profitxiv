@@ -1,45 +1,81 @@
 # ProfitXIV
 
-**ProfitXIV** is a lightweight web tool designed to optimize gil-making in Final Fantasy XIV by identifying the most profitable items to craft and resell in real time.
+**ProfitXIV** is a lightweight web tool to see how much items resell for on the Final Fantasy XIV market board. It displays items that sell for the highest prices, with average and last sale prices per unit.
 
-The application analyzes marketboard prices across servers and calculates potential profit margins based on crafting costs, material prices, and current sell values — all without storing any data in a database.
+The application fetches marketboard data from Universalis and displays resale values — all without storing any data in a database.
 
-This project is built for fun and personal gameplay optimization.
+This project is built for fun and gameplay optimization.
 
 ---
 
 ## Features
 
-- Retrieve real-time marketboard prices for items across multiple servers  
-- Identify items with the highest resale value
-- Fully client-driven with no database  
+- Full scan of all marketable items (6–8 minutes) with live progress
+- Average sale price per unit (last 4 days)
+- Last sale price per unit
+- Filter by craftable items only (XIVAPI recipe check)
+- Sort by average sale price or sales per day
+- Trace dialog: step-by-step logic for each item (verify in-game)
+- Real-time market data from Universalis
+- Item names from XIVAPI
+- No database, client-driven
 
 ---
 
 ## How it works
 
-ProfitXIV fetches marketboard data from a public FFXIV API and performs all calculations on demand.
-
-For each item:
-1. Current sell prices are retrieved per server  
-2. Crafting recipe and required materials are analyzed (for the v2)
-3. Material costs are calculated using current market prices
-4. Final profit margin is computed
-5. Items are ranked by profitability
+1. User selects Data Center and World
+2. Search triggers a full scan (SSE) of all marketable items
+3. For each item: average sale price per unit, last sale price per unit, daily velocity
+4. Optional: filter out non-craftable items via XIVAPI
+5. Results sorted by average sale price (default), sortable by sales/day
+6. Trace dialog shows step-by-step data for verification
 
 ---
 
 ## Tech Stack
 
-- Next.js  
-- TypeScript  
-- TailwindCSS 
-- Shadcn/ui
+- Next.js 16
+- TypeScript
+- Tailwind CSS
+- shadcn/ui (Radix UI)
 - [Universalis API](https://docs.universalis.app/)
+- [XIVAPI](https://xivapi.com/) (item names, craftable check)
+
+---
+
+## Getting Started
+
+```bash
+npm install
+npm run dev
+```
+
+Then open [http://localhost:3000](http://localhost:3000)
+
+### Scripts
+
+- `npm run dev` — development server
+- `npm run build` — production build
+- `npm run start` — production server
 
 ---
 
 ## Disclaimer
 
-This project is a personal tool created for gameplay optimization and experimentation.  
+This project is a tool created for gameplay optimization and experimentation.  
 All data belongs to their respective sources and APIs.
+
+---
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+
+You are free to use, modify, and distribute this software, but you must:
+- Give appropriate credit
+- Disclose source code if you run a modified version publicly
+- Keep the same license
+
+See the [LICENSE](./LICENSE.md) file for full details.
+
