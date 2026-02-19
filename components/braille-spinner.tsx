@@ -26,5 +26,3 @@ export function BrailleSpinner({ name = "braille", children }: SpinnerProps) {
     </span>
   );
 }
-
-// Usage: <Spinner name="helix">Generating response...</Spinner>

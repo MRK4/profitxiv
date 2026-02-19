@@ -176,39 +176,31 @@ export default function Home() {
   const fetchedIdsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
+    const collectIdsFromTree = (
+      nodes: Array<{ itemId: number; children?: unknown[] }>
+    ): number[] =>
+      nodes.flatMap((n) => [
+        n.itemId,
+        ...(n.children
+          ? collectIdsFromTree(n.children as Array<{ itemId: number; children?: unknown[] }>)
+          : []),
+      ]);
+
+    const ids = new Set(results.map((r) => r.itemId));
+    if (craftSimData?.tree) {
+      collectIdsFromTree(craftSimData.tree).forEach((id) => ids.add(id));
+    }
+
     if (results.length === 0) {
       setItemNames({});
       setItemIcons({});
       fetchedIdsRef.current = new Set();
-      return;
     }
-    const ids = [...new Set(results.map((r) => r.itemId))];
-    const idsToFetch = ids.filter((id) => !fetchedIdsRef.current.has(id));
-    if (idsToFetch.length === 0) return;
-    apiClient
-      .get("/api/xivapi/items", { params: { ids: idsToFetch.join(",") } })
-      .then((res) => {
-        const names = res.data.names ?? {};
-        const icons = res.data.icons ?? {};
-        idsToFetch.forEach((id) => fetchedIdsRef.current.add(id));
-        setItemNames((prev) => ({ ...prev, ...names }));
-        setItemIcons((prev) => ({ ...prev, ...icons }));
-      })
-      .catch(() => {});
-  }, [results]);
+    if (ids.size === 0) return;
 
-  useEffect(() => {
-    if (!craftSimData) return;
-    const collectIds = (
-      nodes: typeof craftSimData.tree
-    ): number[] =>
-      nodes.flatMap((n) => [
-        n.itemId,
-        ...(n.children ? collectIds(n.children as typeof craftSimData.tree) : []),
-      ]);
-    const ids = [...new Set(collectIds(craftSimData.tree))];
-    const idsToFetch = ids.filter((id) => !fetchedIdsRef.current.has(id));
+    const idsToFetch = [...ids].filter((id) => !fetchedIdsRef.current.has(id));
     if (idsToFetch.length === 0) return;
+
     apiClient
       .get("/api/xivapi/items", { params: { ids: idsToFetch.join(",") } })
       .then((res) => {
@@ -219,7 +211,7 @@ export default function Home() {
         setItemIcons((prev) => ({ ...prev, ...icons }));
       })
       .catch(() => {});
-  }, [craftSimData]);
+  }, [results, craftSimData]);
 
   const displayedResults = useMemo(() => {
     const sorted = [...results].sort((a, b) => {
@@ -261,7 +253,6 @@ export default function Home() {
     setRecipeMap({});
     setScanProgress("Scanning Universalis...");
     setProgressValue(0);
-    console.log("[Recherche] Étape 1: Scan Universalis");
 
     const accumulated = new Map<number, ProfitResult>();
     const url = `/api/universalis/scan-full?world=${encodeURIComponent(selectedWorld)}&dataCenter=${encodeURIComponent(selectedDataCenter)}`;
@@ -270,9 +261,6 @@ export default function Home() {
     eventSource.addEventListener("results", (e: MessageEvent) => {
       const data = JSON.parse(e.data);
       const batchResults = data.results ?? [];
-      console.log(
-        `[Recherche] Batch ${data.batch}/${data.totalBatches} reçu - ${batchResults.length} items`
-      );
       for (const r of batchResults) {
         const existing = accumulated.get(r.itemId);
         if (!existing || r.profit > existing.profit) {
@@ -296,8 +284,6 @@ export default function Home() {
       const data = e.data ? JSON.parse(e.data) : {};
       eventSource.close();
 
-      console.log("[Recherche] Scan terminé");
-
       const sorted = [...accumulated.values()]
         .sort((a, b) => b.profit - a.profit)
         .slice(0, 100);
@@ -308,7 +294,6 @@ export default function Home() {
       if ((hideNonCraftable || hideNonGatherable) && sorted.length > 0) {
         setScanProgress("Fetching item metadata (XIVAPI)...");
         setProgressValue(90);
-        console.log("[Recherche] Étape 2: Enrichissement métadonnées XIVAPI");
 
         try {
           const itemIds = sorted.map((r) => r.itemId);
@@ -329,11 +314,7 @@ export default function Home() {
           });
 
           setRecipeMap(metadataResponse.recipeMap);
-          console.log(
-            `[Recherche] Métadonnées XIVAPI - ${filtered.length} items affichés`
-          );
-        } catch (err) {
-          console.error("[Recherche] Erreur métadonnées XIVAPI:", err);
+        } catch {
           setSearchError("Unable to fetch item metadata (XIVAPI)");
         }
       }
@@ -347,7 +328,6 @@ export default function Home() {
           ? `Search complete! ${filtered.length} item${filtered.length === 1 ? "" : "s"} found.`
           : "Search complete."
       );
-      console.log("[Recherche] Étape 3: Terminé");
     });
 
     eventSource.addEventListener("scan_error", (e: MessageEvent) => {

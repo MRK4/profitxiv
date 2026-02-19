@@ -82,22 +82,16 @@ async function getItemIconsViaSearch(
       columns: "ID,Icon",
       limit: ITEM_DATA_BATCH_SIZE,
     };
-    console.log("[getItemIcons] Search request:", { batch: batch.slice(0, 5), params });
     try {
       const { data } = await xivapiV1.get<ItemSearchResponse>("/search", {
         params,
       });
       const results = data.Results ?? [];
-      console.log("[getItemIcons] Search response:", {
-        resultsCount: results.length,
-        sample: results[0],
-      });
       for (const r of results) {
         const id = r.ID;
         if (id != null) {
           const iconUrl = buildIconUrl(r.Icon);
           if (iconUrl != null) icons[id] = iconUrl;
-          else console.log("[getItemIcons] No icon for ID", id, "Icon raw:", r.Icon);
         }
       }
     } catch (err) {
@@ -112,7 +106,6 @@ async function getItemIconsViaItemEndpoint(
   itemIds: number[]
 ): Promise<Record<number, string>> {
   const icons: Record<number, string> = {};
-  console.log("[getItemIcons] Fallback: using /item/{id} for", itemIds.length, "items");
   for (const id of itemIds) {
     try {
       const { data } = await xivapiV1.get<{ Icon?: string }>(`/item/${id}`, {
@@ -120,8 +113,8 @@ async function getItemIconsViaItemEndpoint(
       });
       const iconUrl = buildIconUrl(data.Icon);
       if (iconUrl != null) icons[id] = iconUrl;
-    } catch (err) {
-      console.log("[getItemIcons] /item/{id} failed for", id, (err as Error).message);
+    } catch {
+      // Skip failed items
     }
   }
   return icons;
@@ -253,8 +246,6 @@ export async function getRecipesForItems(
   return { craftableIds, recipeMap };
 }
 
-// --- Gatherable items (mining, botany, fishing) ---
-
 interface GameContentLinksResponse {
   GameContentLinks?: {
     GatheringItem?: { Item?: unknown[] };
@@ -317,8 +308,6 @@ export async function getItemMetadata(
     recipeComponentIds: [...recipeComponentIds],
   };
 }
-
-// --- Recipe tree for craft simulator ---
 
 const RECIPE_COLUMNS =
   "ID,AmountResult,AmountIngredient0,AmountIngredient1,AmountIngredient2,AmountIngredient3,AmountIngredient4,AmountIngredient5,AmountIngredient6,AmountIngredient7,ItemIngredient0.ID,ItemIngredient0.Name,ItemIngredient0.PriceLow,ItemIngredient0.PriceMid,ItemIngredient1.ID,ItemIngredient1.Name,ItemIngredient1.PriceLow,ItemIngredient1.PriceMid,ItemIngredient2.ID,ItemIngredient2.Name,ItemIngredient2.PriceLow,ItemIngredient2.PriceMid,ItemIngredient3.ID,ItemIngredient3.Name,ItemIngredient3.PriceLow,ItemIngredient3.PriceMid,ItemIngredient4.ID,ItemIngredient4.Name,ItemIngredient4.PriceLow,ItemIngredient4.PriceMid,ItemIngredient5.ID,ItemIngredient5.Name,ItemIngredient5.PriceLow,ItemIngredient5.PriceMid,ItemIngredient6.ID,ItemIngredient6.Name,ItemIngredient6.PriceLow,ItemIngredient6.PriceMid,ItemIngredient7.ID,ItemIngredient7.Name,ItemIngredient7.PriceLow,ItemIngredient7.PriceMid,ItemIngredientRecipe0,ItemIngredientRecipe1,ItemIngredientRecipe2,ItemIngredientRecipe3,ItemIngredientRecipe4,ItemIngredientRecipe5,ItemIngredientRecipe6,ItemIngredientRecipe7,ItemResult.ID";

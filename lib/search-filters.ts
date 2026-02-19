@@ -30,17 +30,6 @@ export function buildItemMetadata(
   };
 }
 
-const DEFAULT_METADATA: ItemMetadata = {
-  id: 0,
-  isCraftable: false,
-  isGatherable: false,
-  isRecipeComponent: false,
-};
-
-export function getDefaultMetadata(itemId: number): ItemMetadata {
-  return { ...DEFAULT_METADATA, id: itemId };
-}
-
 export interface SearchFilters {
   hideNonCraftable: boolean;
   hideNonGatherable: boolean;
