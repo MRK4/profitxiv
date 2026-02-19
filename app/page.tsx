@@ -346,6 +346,11 @@ export default function Home() {
   const formatGil = (n: number) =>
     n.toLocaleString("en-US", { maximumFractionDigits: 0 });
   const gilUnit = (n: number) => (n > 1 ? "gils" : "gil");
+  const velocityColor = (v: number) => {
+    if (v >= 10) return "text-green-600 dark:text-green-400";
+    if (v < 2) return "text-red-600 dark:text-red-400";
+    return "text-amber-600 dark:text-amber-400";
+  };
   const formatLastSaleDate = (ts: number) => {
     const date = new Date(ts);
     const now = new Date();
@@ -640,8 +645,25 @@ export default function Home() {
                         </span>
                       </TableHead>
                     </TooltipTrigger>
-                    <TooltipContent>
-                      Average number of sales per day (velocity). Click to sort.
+                    <TooltipContent className="max-w-xs">
+                      <p className="mb-2">
+                        Average number of sales per day (velocity). Click to
+                        sort.
+                      </p>
+                      <div className="flex flex-col gap-1.5 text-xs">
+                        <span className="flex items-center gap-2">
+                          <span className="size-2.5 shrink-0 rounded-sm bg-green-500" />
+                          High turnover (≥10/day)
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="size-2.5 shrink-0 rounded-sm bg-amber-500" />
+                          Moderate (2–10/day)
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="size-2.5 shrink-0 rounded-sm bg-red-500" />
+                          {"Low (<2/day) — risky when price is high"}
+                        </span>
+                      </div>
                     </TooltipContent>
                   </Tooltip>
                   <TableHead className="w-24" />
@@ -709,7 +731,9 @@ export default function Home() {
                         "—"
                       )}
                     </TableCell>
-                    <TableCell className="font-mono text-right">
+                    <TableCell
+                      className={`font-mono text-right ${velocityColor(row.dailyVelocity)}`}
+                    >
                       {row.dailyVelocity}
                     </TableCell>
                     <TableCell className="w-24">
