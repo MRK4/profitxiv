@@ -66,7 +66,9 @@ export async function GET(request: NextRequest) {
               nq?: {
                 minListing?: { world?: { price?: number } };
                 averageSalePrice?: { world?: { price?: number } };
-                recentPurchase?: { world?: { price?: number } };
+                recentPurchase?: {
+                  world?: { price?: number; timestamp?: number };
+                };
                 dailySaleVelocity?: { world?: { quantity?: number } };
               };
             }>;
@@ -77,6 +79,7 @@ export async function GET(request: NextRequest) {
             minPrice: number;
             avgSalePrice: number;
             lastSalePrice: number;
+            lastSaleTimestamp?: number;
             profit: number;
             dailyVelocity: number;
           }[] = [];
@@ -87,7 +90,9 @@ export async function GET(request: NextRequest) {
 
             const minPrice = nq.minListing?.world?.price ?? 0;
             const avgSalePrice = nq.averageSalePrice?.world?.price ?? 0;
-            const lastSalePrice = nq.recentPurchase?.world?.price ?? 0;
+            const recentPurchase = nq.recentPurchase?.world;
+            const lastSalePrice = recentPurchase?.price ?? 0;
+            const lastSaleTimestamp = recentPurchase?.timestamp;
             const dailyVelocity =
               nq.dailySaleVelocity?.world?.quantity ?? 0;
 
@@ -104,6 +109,10 @@ export async function GET(request: NextRequest) {
               minPrice,
               avgSalePrice: Math.round(avgSalePrice),
               lastSalePrice: lastSalePrice > 0 ? Math.round(lastSalePrice) : 0,
+              lastSaleTimestamp:
+                lastSalePrice > 0 && lastSaleTimestamp
+                  ? lastSaleTimestamp
+                  : undefined,
               profit,
               dailyVelocity: Math.round(dailyVelocity * 10) / 10,
             });

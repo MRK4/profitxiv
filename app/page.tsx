@@ -5,6 +5,7 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUp,
+  ChartColumn,
   Github,
   Info,
   Loader2,
@@ -70,6 +71,7 @@ interface ProfitResult {
   minPrice: number;
   avgSalePrice: number;
   lastSalePrice?: number;
+  lastSaleTimestamp?: number;
   profit: number;
   dailyVelocity: number;
 }
@@ -110,6 +112,18 @@ export default function Home() {
   );
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [githubStars, setGithubStars] = useState<number | null>(null);
+  const [compareItemId, setCompareItemId] = useState<number | null>(null);
+  const [compareData, setCompareData] = useState<{
+    worlds: Array<{
+      worldName: string;
+      minPrice: number;
+      currentAveragePrice: number;
+      listingsCount: number;
+    }>;
+    itemId: number;
+  } | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareDataCenter, setCompareDataCenter] = useState<string>("");
 
   const selectedDC = dataCenters.find((dc) => dc.name === selectedDataCenter);
   const worlds = selectedDC?.worlds ?? [];
@@ -331,6 +345,21 @@ export default function Home() {
 
   const formatGil = (n: number) =>
     n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  const gilUnit = (n: number) => (n > 1 ? "gils" : "gil");
+  const formatLastSaleDate = (ts: number) => {
+    const date = new Date(ts);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return "Today";
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 7) return `${diffDays} days ago`;
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+    });
+  };
 
   const handleTrace = async (itemId: number) => {
     if (!selectedWorld || !selectedDataCenter) return;
@@ -347,6 +376,32 @@ export default function Home() {
     } finally {
       setTraceLoading(false);
     }
+  };
+
+  const handleCompare = async (itemId: number, dataCenter: string) => {
+    if (!dataCenter) return;
+    setCompareItemId(itemId);
+    setCompareData(null);
+    setCompareDataCenter(dataCenter);
+    setCompareLoading(true);
+    try {
+      const res = await apiClient.get("/api/universalis/compare-markets", {
+        params: { dataCenter, itemId },
+      });
+      setCompareData(res.data);
+    } catch {
+      setCompareData(null);
+      toast.error("Failed to load market comparison");
+    } finally {
+      setCompareLoading(false);
+    }
+  };
+
+  const openCompareModal = (itemId: number) => {
+    if (!selectedDataCenter) return;
+    setCompareItemId(itemId);
+    setCompareDataCenter(selectedDataCenter);
+    handleCompare(itemId, selectedDataCenter);
   };
 
   return (
@@ -589,7 +644,7 @@ export default function Home() {
                       Average number of sales per day (velocity). Click to sort.
                     </TooltipContent>
                   </Tooltip>
-                  <TableHead className="w-10" />
+                  <TableHead className="w-24" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -635,35 +690,65 @@ export default function Home() {
                       </span>
                     </TableCell>
                     <TableCell className="font-mono text-right text-green-600 dark:text-green-400">
-                      {formatGil(row.avgSalePrice)} gil
+                      {formatGil(row.avgSalePrice)} {gilUnit(row.avgSalePrice)}
                     </TableCell>
                     <TableCell className="font-mono text-right">
-                      {(row.lastSalePrice ?? 0) > 0
-                        ? `${formatGil(row.lastSalePrice!)} gil`
-                        : "—"}
+                      {(row.lastSalePrice ?? 0) > 0 ? (
+                        <span className="flex flex-col items-end">
+                          <span>
+                            {formatGil(row.lastSalePrice!)}{" "}
+                            {gilUnit(row.lastSalePrice!)}
+                          </span>
+                          {row.lastSaleTimestamp != null && (
+                            <span className="text-muted-foreground text-xs">
+                              {formatLastSaleDate(row.lastSaleTimestamp)}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
                     </TableCell>
                     <TableCell className="font-mono text-right">
                       {row.dailyVelocity}
                     </TableCell>
-                    <TableCell className="w-10">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="size-8"
-                            onClick={() => handleTrace(row.itemId)}
-                            disabled={
-                              !selectedWorld || !selectedDataCenter
-                            }
-                          >
-                            <Info className="size-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          Trace logic step-by-step
-                        </TooltipContent>
-                      </Tooltip>
+                    <TableCell className="w-24">
+                      <div className="flex items-center gap-0.5">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              onClick={() => openCompareModal(row.itemId)}
+                              disabled={!selectedDataCenter}
+                            >
+                              <ChartColumn className="size-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Compare prices by world
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              onClick={() => handleTrace(row.itemId)}
+                              disabled={
+                                !selectedWorld || !selectedDataCenter
+                              }
+                            >
+                              <Info className="size-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Trace logic step-by-step
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -898,6 +983,200 @@ export default function Home() {
                 Failed to load trace data.
               </p>
             ) : null}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={compareItemId !== null}
+          onOpenChange={(open) => !open && setCompareItemId(null)}
+        >
+          <DialogContent className="max-h-[85vh] overflow-y-auto sm:!max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="font-mono">
+                {compareItemId && itemNames[compareItemId] ? (
+                  <>
+                    {itemNames[compareItemId]}{" "}
+                    <span className="text-muted-foreground text-sm font-normal">
+                      ({compareItemId})
+                    </span>
+                  </>
+                ) : compareItemId ? (
+                  <>
+                    Comparison{" "}
+                    <span className="text-muted-foreground text-sm font-normal">
+                      {compareItemId}
+                    </span>
+                  </>
+                ) : (
+                  "Market comparison"
+                )}
+              </DialogTitle>
+              <DialogDescription>
+                Prices by world in the selected Data Center
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="compare-dc" className="font-mono shrink-0">
+                  Data Center
+                </Label>
+                <Select
+                  value={compareDataCenter}
+                  onValueChange={(dc) => {
+                    setCompareDataCenter(dc);
+                    if (compareItemId) handleCompare(compareItemId, dc);
+                  }}
+                  disabled={compareLoading}
+                >
+                  <SelectTrigger id="compare-dc" className="font-mono flex-1">
+                    <SelectValue placeholder="Select a DC" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {dataCenters.map((dc) => (
+                      <SelectItem key={dc.name} value={dc.name}>
+                        {dc.name} ({dc.region})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {compareLoading ? (
+                <div className="flex flex-col gap-4">
+                  <div className="rounded-md border bg-muted/30 p-3 font-mono text-sm space-y-2">
+                    <div className="flex gap-2">
+                      <Skeleton className="h-4 w-20" />
+                      <Skeleton className="h-4 w-32" />
+                    </div>
+                    <div className="flex gap-2">
+                      <Skeleton className="h-4 w-20" />
+                      <Skeleton className="h-4 w-32" />
+                    </div>
+                    <div className="flex gap-2">
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-4 w-12" />
+                    </div>
+                  </div>
+                  <div className="rounded-md border overflow-hidden">
+                    <div className="p-2 border-b">
+                      <div className="flex gap-4 justify-between">
+                        <Skeleton className="h-4 w-16" />
+                        <Skeleton className="h-4 w-20" />
+                        <Skeleton className="h-4 w-24" />
+                        <Skeleton className="h-4 w-16" />
+                      </div>
+                    </div>
+                    {[...Array(6)].map((_, i) => (
+                      <div
+                        key={i}
+                        className="flex gap-4 justify-between p-2 border-b last:border-0"
+                      >
+                        <Skeleton className="h-4 w-24" />
+                        <Skeleton className="h-4 w-16" />
+                        <Skeleton className="h-4 w-20" />
+                        <Skeleton className="h-4 w-8" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : compareData && compareData.worlds.length > 0 ? (
+                <>
+                  <div className="rounded-md border bg-muted/30 p-3 font-mono text-sm space-y-2">
+                    <div>
+                      <span className="text-muted-foreground">Cheapest: </span>
+                      <span className="text-red-600 dark:text-red-400 font-medium">
+                        {compareData.worlds[0].worldName}{" "}
+                        {formatGil(compareData.worlds[0].minPrice)} {gilUnit(compareData.worlds[0].minPrice)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">
+                        Most expensive:{" "}
+                      </span>
+                      <span className="text-green-600 dark:text-green-400 font-medium">
+                        {
+                          compareData.worlds[compareData.worlds.length - 1]
+                            .worldName
+                        }{" "}
+                        {formatGil(
+                          compareData.worlds[compareData.worlds.length - 1]
+                            .minPrice
+                        )}{" "}
+                        {gilUnit(
+                          compareData.worlds[compareData.worlds.length - 1]
+                            .minPrice
+                        )}
+                      </span>
+                    </div>
+                    {compareData.worlds.length > 1 &&
+                      compareData.worlds[0].minPrice > 0 && (
+                        <div>
+                          <span className="text-muted-foreground">
+                            Difference:{" "}
+                          </span>
+                          <span>
+                            {(
+                              ((compareData.worlds[
+                                compareData.worlds.length - 1
+                              ].minPrice -
+                                compareData.worlds[0].minPrice) /
+                                compareData.worlds[0].minPrice) *
+                              100
+                            ).toFixed(0)}
+                            %
+                          </span>
+                        </div>
+                      )}
+                  </div>
+                  <div className="rounded-md border overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="font-mono">World</TableHead>
+                          <TableHead className="font-mono text-right">
+                            Min price
+                          </TableHead>
+                          <TableHead className="font-mono text-right">
+                            Avg price
+                          </TableHead>
+                          <TableHead className="font-mono text-right">
+                            Listings
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {compareData.worlds.map((w) => (
+                          <TableRow key={w.worldName}>
+                            <TableCell className="font-mono">
+                              {w.worldName}
+                            </TableCell>
+                            <TableCell className="font-mono text-right text-green-600 dark:text-green-400">
+                              {formatGil(w.minPrice)} {gilUnit(w.minPrice)}
+                            </TableCell>
+                            <TableCell className="font-mono text-right">
+                              {formatGil(
+                                Math.round(w.currentAveragePrice)
+                              )}{" "}
+                              {gilUnit(Math.round(w.currentAveragePrice))}
+                            </TableCell>
+                            <TableCell className="font-mono text-right">
+                              {w.listingsCount}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              ) : compareData && compareData.worlds.length === 0 ? (
+                <p className="text-muted-foreground text-sm py-4">
+                  No market data for this item on this Data Center.
+                </p>
+              ) : compareItemId && !compareLoading ? (
+                <p className="text-destructive text-sm py-4">
+                  Failed to load comparison.
+                </p>
+              ) : null}
+            </div>
           </DialogContent>
         </Dialog>
       </main>
