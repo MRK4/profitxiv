@@ -8,9 +8,12 @@ import {
   Github,
   Hammer,
   Info,
+  Moon,
   Search,
   Star,
+  Sun,
 } from "lucide-react";
+import { useTheme } from "next-themes";
 import { apiClient } from "@/lib/api-client";
 import {
   Select,
@@ -135,6 +138,7 @@ export default function Home() {
   const [craftSimLoading, setCraftSimLoading] = useState(false);
   const [craftSimChecked, setCraftSimChecked] = useState<Set<string>>(new Set());
 
+  const { resolvedTheme, setTheme } = useTheme();
   const selectedDC = dataCenters.find((dc) => dc.name === selectedDataCenter);
   const worlds = selectedDC?.worlds ?? [];
 
@@ -476,29 +480,56 @@ export default function Home() {
             />
             ProfitXIV
           </h1>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <a
-                href="https://github.com/MRK4/profitxiv"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors font-mono text-sm"
-                aria-label="View on GitHub"
-              >
-                <Github className="size-5" />
-              </a>
-            </TooltipTrigger>
-            <TooltipContent>
-              {githubStars !== null ? (
-                <span className="flex items-center gap-1.5">
-                  <Star className="size-4 fill-current shrink-0" />
-                  {githubStars.toLocaleString()}
-                </span>
-              ) : (
-                "Click to open repository"
-              )}
-            </TooltipContent>
-          </Tooltip>
+          <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setTheme(resolvedTheme === "dark" ? "light" : "dark")
+                  }
+                  className="flex items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  aria-label={
+                    resolvedTheme === "dark"
+                      ? "Switch to light mode"
+                      : "Switch to dark mode"
+                  }
+                >
+                  {resolvedTheme === "dark" ? (
+                    <Sun className="size-5" />
+                  ) : (
+                    <Moon className="size-5" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <a
+                  href="https://github.com/MRK4/profitxiv"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors font-mono text-sm"
+                  aria-label="View on GitHub"
+                >
+                  <Github className="size-5" />
+                </a>
+              </TooltipTrigger>
+              <TooltipContent>
+                {githubStars !== null ? (
+                  <span className="flex items-center gap-1.5">
+                    <Star className="size-4 fill-current shrink-0" />
+                    {githubStars.toLocaleString()}
+                  </span>
+                ) : (
+                  "Click to open repository"
+                )}
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
 
         <div className="flex flex-col gap-6 sm:flex-row">
