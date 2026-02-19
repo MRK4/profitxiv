@@ -5,15 +5,10 @@ import {
   ArrowDown,
   ArrowUp,
   ChartColumn,
-  Github,
   Hammer,
   Info,
-  Moon,
   Search,
-  Star,
-  Sun,
 } from "lucide-react";
-import { useTheme } from "next-themes";
 import { apiClient } from "@/lib/api-client";
 import {
   Select,
@@ -47,6 +42,7 @@ import { ScanAlertDialog } from "@/components/scan-alert-dialog";
 import { TraceDialog } from "@/components/trace-dialog";
 import { CompareDialog } from "@/components/compare-dialog";
 import { CraftSimDialog } from "@/components/craft-sim-dialog";
+import { Header } from "@/components/header";
 import {
   buildItemMetadata,
   shouldDisplayItem,
@@ -138,7 +134,6 @@ export default function Home() {
   const [craftSimLoading, setCraftSimLoading] = useState(false);
   const [craftSimChecked, setCraftSimChecked] = useState<Set<string>>(new Set());
 
-  const { resolvedTheme, setTheme } = useTheme();
   const selectedDC = dataCenters.find((dc) => dc.name === selectedDataCenter);
   const worlds = selectedDC?.worlds ?? [];
 
@@ -469,68 +464,7 @@ export default function Home() {
   return (
     <div className="flex min-h-screen flex-col items-center bg-background font-sans">
       <main className="flex w-full max-w-full flex-col gap-8 p-8 lg:max-w-6xl xl:max-w-7xl">
-        <div className="flex w-full items-center justify-between gap-4">
-          <h1 className="font-mono text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Image
-              src="/gil.png"
-              alt="Gil"
-              width={28}
-              height={28}
-              className="size-7"
-            />
-            ProfitXIV
-          </h1>
-          <div className="flex items-center gap-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setTheme(resolvedTheme === "dark" ? "light" : "dark")
-                  }
-                  className="flex items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                  aria-label={
-                    resolvedTheme === "dark"
-                      ? "Switch to light mode"
-                      : "Switch to dark mode"
-                  }
-                >
-                  {resolvedTheme === "dark" ? (
-                    <Sun className="size-5" />
-                  ) : (
-                    <Moon className="size-5" />
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <a
-                  href="https://github.com/MRK4/profitxiv"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors font-mono text-sm"
-                  aria-label="View on GitHub"
-                >
-                  <Github className="size-5" />
-                </a>
-              </TooltipTrigger>
-              <TooltipContent>
-                {githubStars !== null ? (
-                  <span className="flex items-center gap-1.5">
-                    <Star className="size-4 fill-current shrink-0" />
-                    {githubStars.toLocaleString()}
-                  </span>
-                ) : (
-                  "Click to open repository"
-                )}
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
+        <Header githubStars={githubStars} />
 
         <div className="flex flex-col gap-6 sm:flex-row">
           <div className="flex min-w-0 flex-1 flex-col gap-2">
