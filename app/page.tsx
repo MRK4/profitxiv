@@ -44,6 +44,11 @@ import { ScanAlertDialog } from "@/components/scan-alert-dialog";
 import { TraceDialog } from "@/components/trace-dialog";
 import { CompareDialog } from "@/components/compare-dialog";
 import { CraftSimDialog } from "@/components/craft-sim-dialog";
+import {
+  buildItemMetadata,
+  shouldDisplayItem,
+  type ItemMetadataResponse,
+} from "@/lib/search-filters";
 
 interface DataCenterWithWorlds {
   name: string;
@@ -75,6 +80,7 @@ export default function Home() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [showScanAlert, setShowScanAlert] = useState(false);
   const [hideNonCraftable, setHideNonCraftable] = useState(true);
+  const [hideNonGatherable, setHideNonGatherable] = useState(true);
   const [recipeMap, setRecipeMap] = useState<Record<number, number>>({});
   const [traceItemId, setTraceItemId] = useState<number | null>(null);
   const [traceData, setTraceData] = useState<{
@@ -288,7 +294,6 @@ export default function Home() {
 
     eventSource.addEventListener("done", async (e: MessageEvent) => {
       const data = e.data ? JSON.parse(e.data) : {};
-      const totalBatches = data.totalBatches ?? 1;
       eventSource.close();
 
       console.log("[Recherche] Scan terminé");
@@ -297,56 +302,49 @@ export default function Home() {
         .sort((a, b) => b.profit - a.profit)
         .slice(0, 100);
 
-      let finalCount = sorted.length;
-      if (hideNonCraftable && sorted.length > 0) {
-        setScanProgress(
-          "Checking craftable items (XIVAPI)..."
-        );
+      let filtered = sorted;
+      const filters = { hideNonCraftable, hideNonGatherable };
+
+      if ((hideNonCraftable || hideNonGatherable) && sorted.length > 0) {
+        setScanProgress("Fetching item metadata (XIVAPI)...");
         setProgressValue(90);
-        console.log("[Recherche] Étape 2: Vérification XIVAPI");
+        console.log("[Recherche] Étape 2: Enrichissement métadonnées XIVAPI");
 
         try {
           const itemIds = sorted.map((r) => r.itemId);
-          const allCraftableIds: number[] = [];
-          const allRecipeMap: Record<number, number> = {};
-          for (let i = 0; i < itemIds.length; i += 100) {
-            const batchIds = itemIds.slice(i, i + 100);
-            const res = await apiClient.get(
-              "/api/xivapi/recipes-for-items",
-              {
-                params: { ids: batchIds.join(",") },
-              }
-            );
-            const craftableIds = res.data.craftableIds ?? [];
-            const recipeMap = res.data.recipeMap ?? {};
-            allCraftableIds.push(...craftableIds);
-            Object.assign(allRecipeMap, recipeMap);
-          }
-          const craftableSet = new Set(allCraftableIds);
-          const filtered = sorted.filter((r) => craftableSet.has(r.itemId));
-          finalCount = filtered.length;
-          setResults(filtered);
-          setRecipeMap(allRecipeMap);
+          const metadataRes = await apiClient.get<ItemMetadataResponse>(
+            "/api/xivapi/item-metadata",
+            { params: { ids: itemIds.join(",") } }
+          );
+          const metadataResponse: ItemMetadataResponse = {
+            gatherableIds: metadataRes.data.gatherableIds ?? [],
+            craftableIds: metadataRes.data.craftableIds ?? [],
+            recipeMap: metadataRes.data.recipeMap ?? {},
+            recipeComponentIds: metadataRes.data.recipeComponentIds ?? [],
+          };
+
+          filtered = sorted.filter((r) => {
+            const metadata = buildItemMetadata(r.itemId, metadataResponse);
+            return shouldDisplayItem(r.itemId, metadata, filters);
+          });
+
+          setRecipeMap(metadataResponse.recipeMap);
           console.log(
-            `[Recherche] Vérification XIVAPI terminée - ${filtered.length} items craftables`
+            `[Recherche] Métadonnées XIVAPI - ${filtered.length} items affichés`
           );
         } catch (err) {
-          console.error("[Recherche] Erreur vérification XIVAPI:", err);
-          setSearchError(
-            "Unable to verify craftable items (XIVAPI)"
-          );
-          setResults(sorted);
+          console.error("[Recherche] Erreur métadonnées XIVAPI:", err);
+          setSearchError("Unable to fetch item metadata (XIVAPI)");
         }
-      } else {
-        setResults(sorted);
       }
 
+      setResults(filtered);
       setProgressValue(100);
       setScanProgress(null);
       setScanning(false);
       toast.success(
-        finalCount > 0
-          ? `Search complete! ${finalCount} item${finalCount === 1 ? "" : "s"} found.`
+        filtered.length > 0
+          ? `Search complete! ${filtered.length} item${filtered.length === 1 ? "" : "s"} found.`
           : "Search complete."
       );
       console.log("[Recherche] Étape 3: Terminé");
@@ -575,15 +573,27 @@ export default function Home() {
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <Switch
-              id="craftable-only"
-              checked={hideNonCraftable}
-              onCheckedChange={setHideNonCraftable}
-            />
-            <Label htmlFor="craftable-only" className="font-mono cursor-pointer">
-              Hide non-craftable items
-            </Label>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="craftable-only"
+                checked={hideNonCraftable}
+                onCheckedChange={setHideNonCraftable}
+              />
+              <Label htmlFor="craftable-only" className="font-mono cursor-pointer">
+                Hide non-craftable items
+              </Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="gatherable-only"
+                checked={hideNonGatherable}
+                onCheckedChange={setHideNonGatherable}
+              />
+              <Label htmlFor="gatherable-only" className="font-mono cursor-pointer">
+                Hide non-gatherable items
+              </Label>
+            </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button

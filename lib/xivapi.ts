@@ -253,6 +253,71 @@ export async function getRecipesForItems(
   return { craftableIds, recipeMap };
 }
 
+// --- Gatherable items (mining, botany, fishing) ---
+
+interface GameContentLinksResponse {
+  GameContentLinks?: {
+    GatheringItem?: { Item?: unknown[] };
+  };
+}
+
+export async function getGatherableItems(
+  itemIds: number[]
+): Promise<Set<number>> {
+  const gatherableIds = new Set<number>();
+  const BATCH_SIZE = 50;
+
+  for (let i = 0; i < itemIds.length; i += BATCH_SIZE) {
+    const batch = itemIds.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (id) => {
+        try {
+          const { data } = await xivapiV1.get<GameContentLinksResponse>(
+            `/item/${id}`,
+            { params: { columns: "GameContentLinks" } }
+          );
+          const items = data.GameContentLinks?.GatheringItem?.Item;
+          return Array.isArray(items) && items.length > 0 ? id : null;
+        } catch {
+          return null;
+        }
+      })
+    );
+    results.forEach((id) => {
+      if (id != null) gatherableIds.add(id);
+    });
+  }
+
+  return gatherableIds;
+}
+
+export interface ItemMetadataResult {
+  gatherableIds: number[];
+  craftableIds: number[];
+  recipeMap: Record<number, number>;
+  recipeComponentIds: number[];
+}
+
+export async function getItemMetadata(
+  itemIds: number[]
+): Promise<ItemMetadataResult> {
+  const [recipesResult, gatherableIds] = await Promise.all([
+    getRecipesForItems(itemIds),
+    getGatherableItems(itemIds),
+  ]);
+
+  const { craftableIds, recipeMap } = recipesResult;
+  const recipeIds = [...new Set(Object.values(recipeMap))];
+  const recipeComponentIds = await getRecipeIngredientIds(recipeIds);
+
+  return {
+    gatherableIds: [...gatherableIds],
+    craftableIds: [...craftableIds],
+    recipeMap,
+    recipeComponentIds: [...recipeComponentIds],
+  };
+}
+
 // --- Recipe tree for craft simulator ---
 
 const RECIPE_COLUMNS =
@@ -358,6 +423,31 @@ export async function getRecipeWithIngredients(
   } catch {
     return null;
   }
+}
+
+/** Collect all item IDs used as ingredients in the given recipes (depth 0 only) */
+export async function getRecipeIngredientIds(
+  recipeIds: number[]
+): Promise<Set<number>> {
+  const ingredientIds = new Set<number>();
+  const uniqueRecipeIds = [...new Set(recipeIds)];
+
+  const CONCURRENCY = 5;
+  for (let i = 0; i < uniqueRecipeIds.length; i += CONCURRENCY) {
+    const batch = uniqueRecipeIds.slice(i, i + CONCURRENCY);
+    const recipes = await Promise.all(
+      batch.map((rid) => getRecipeWithIngredients(rid, 0))
+    );
+    for (const r of recipes) {
+      if (r) {
+        for (const ing of r.ingredients) {
+          ingredientIds.add(ing.itemId);
+        }
+      }
+    }
+  }
+
+  return ingredientIds;
 }
 
 export interface RecipeTreeNode {
