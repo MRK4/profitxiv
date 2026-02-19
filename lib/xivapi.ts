@@ -252,3 +252,198 @@ export async function getRecipesForItems(
 
   return { craftableIds, recipeMap };
 }
+
+// --- Recipe tree for craft simulator ---
+
+const RECIPE_COLUMNS =
+  "ID,AmountResult,AmountIngredient0,AmountIngredient1,AmountIngredient2,AmountIngredient3,AmountIngredient4,AmountIngredient5,AmountIngredient6,AmountIngredient7,ItemIngredient0.ID,ItemIngredient0.Name,ItemIngredient0.PriceLow,ItemIngredient0.PriceMid,ItemIngredient1.ID,ItemIngredient1.Name,ItemIngredient1.PriceLow,ItemIngredient1.PriceMid,ItemIngredient2.ID,ItemIngredient2.Name,ItemIngredient2.PriceLow,ItemIngredient2.PriceMid,ItemIngredient3.ID,ItemIngredient3.Name,ItemIngredient3.PriceLow,ItemIngredient3.PriceMid,ItemIngredient4.ID,ItemIngredient4.Name,ItemIngredient4.PriceLow,ItemIngredient4.PriceMid,ItemIngredient5.ID,ItemIngredient5.Name,ItemIngredient5.PriceLow,ItemIngredient5.PriceMid,ItemIngredient6.ID,ItemIngredient6.Name,ItemIngredient6.PriceLow,ItemIngredient6.PriceMid,ItemIngredient7.ID,ItemIngredient7.Name,ItemIngredient7.PriceLow,ItemIngredient7.PriceMid,ItemIngredientRecipe0,ItemIngredientRecipe1,ItemIngredientRecipe2,ItemIngredientRecipe3,ItemIngredientRecipe4,ItemIngredientRecipe5,ItemIngredientRecipe6,ItemIngredientRecipe7,ItemResult.ID";
+
+export interface RecipeIngredient {
+  itemId: number;
+  name: string;
+  amount: number;
+  priceLow: number;
+  priceMid: number;
+  isCraftable: boolean;
+  subRecipeId?: number;
+}
+
+export interface RecipeData {
+  recipeId: number;
+  itemId: number;
+  amountResult: number;
+  ingredients: RecipeIngredient[];
+}
+
+interface XivRecipeRaw {
+  ID: number;
+  AmountResult?: number;
+  AmountIngredient0?: number;
+  AmountIngredient1?: number;
+  AmountIngredient2?: number;
+  AmountIngredient3?: number;
+  AmountIngredient4?: number;
+  AmountIngredient5?: number;
+  AmountIngredient6?: number;
+  AmountIngredient7?: number;
+  ItemIngredient0?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
+  ItemIngredient1?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
+  ItemIngredient2?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
+  ItemIngredient3?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
+  ItemIngredient4?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
+  ItemIngredient5?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
+  ItemIngredient6?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
+  ItemIngredient7?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
+  ItemIngredientRecipe0?: { ID?: number }[] | null;
+  ItemIngredientRecipe1?: { ID?: number }[] | null;
+  ItemIngredientRecipe2?: { ID?: number }[] | null;
+  ItemIngredientRecipe3?: { ID?: number }[] | null;
+  ItemIngredientRecipe4?: { ID?: number }[] | null;
+  ItemIngredientRecipe5?: { ID?: number }[] | null;
+  ItemIngredientRecipe6?: { ID?: number }[] | null;
+  ItemIngredientRecipe7?: { ID?: number }[] | null;
+  ItemResult?: { ID?: number };
+}
+
+const MAX_RECIPE_DEPTH = 3;
+
+export async function getRecipeWithIngredients(
+  recipeId: number,
+  depth = 0
+): Promise<RecipeData | null> {
+  if (depth > MAX_RECIPE_DEPTH) return null;
+  try {
+    const { data } = await xivapiV1.get<XivRecipeRaw>(`/recipe/${recipeId}`, {
+      params: { columns: RECIPE_COLUMNS },
+    });
+
+    const itemId = data.ItemResult?.ID ?? 0;
+    const amountResult = data.AmountResult ?? 1;
+    const ingredients: RecipeIngredient[] = [];
+
+    for (let i = 0; i < 8; i++) {
+      const amount =
+        (data as unknown as Record<string, number>)[`AmountIngredient${i}`] ?? 0;
+      if (amount <= 0) continue;
+
+      const ing = data as unknown as Record<string, unknown>;
+      const itemIng = ing[`ItemIngredient${i}`] as
+        | { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number }
+        | undefined;
+      const subRecipes = ing[`ItemIngredientRecipe${i}`] as { ID?: number }[] | undefined;
+
+      const ingItemId = itemIng?.ID;
+      if (!ingItemId || ingItemId <= 0) continue;
+
+      const subRecipe = Array.isArray(subRecipes) && subRecipes.length > 0 ? subRecipes[0] : null;
+      const isCraftable = subRecipe != null && (subRecipe.ID ?? 0) > 0;
+
+      ingredients.push({
+        itemId: ingItemId,
+        name: itemIng?.Name ?? `Item ${ingItemId}`,
+        amount,
+        priceLow: itemIng?.PriceLow ?? 0,
+        priceMid: itemIng?.PriceMid ?? 0,
+        isCraftable,
+        subRecipeId: isCraftable ? (subRecipe!.ID ?? 0) : undefined,
+      });
+    }
+
+    return {
+      recipeId: data.ID,
+      itemId,
+      amountResult,
+      ingredients,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export interface RecipeTreeNode {
+  itemId: number;
+  name: string;
+  amount: number;
+  amountResult: number;
+  buyPrice: number;
+  craftCost: number;
+  isCraftable: boolean;
+  depth: number;
+  children?: RecipeTreeNode[];
+}
+
+export async function getRecipeTree(
+  recipeId: number,
+  marketPrices: Record<number, number>,
+  depth = 0
+): Promise<RecipeTreeNode[]> {
+  const recipe = await getRecipeWithIngredients(recipeId, depth);
+  if (!recipe) return [];
+
+  const nodes: RecipeTreeNode[] = [];
+
+  for (const ing of recipe.ingredients) {
+    const marketPrice = marketPrices[ing.itemId] ?? null;
+    const npcPrice =
+      ing.priceLow > 0 ? ing.priceLow : ing.priceMid > 0 ? ing.priceMid : 0;
+    const buyPrice = marketPrice != null ? Math.min(marketPrice, npcPrice || Infinity) : npcPrice;
+
+    let craftCost = 0;
+    let children: RecipeTreeNode[] | undefined;
+
+    if (ing.isCraftable && ing.subRecipeId && depth < MAX_RECIPE_DEPTH) {
+      children = await getRecipeTree(ing.subRecipeId, marketPrices, depth + 1);
+      const subRecipe = await getRecipeWithIngredients(ing.subRecipeId, depth + 1);
+      const subAmountResult = subRecipe?.amountResult ?? 1;
+      craftCost = children.reduce(
+        (sum, c) =>
+          sum +
+          (c.isCraftable ? c.craftCost / (c.amountResult || 1) : c.buyPrice) *
+            c.amount,
+        0
+      );
+      nodes.push({
+        itemId: ing.itemId,
+        name: ing.name,
+        amount: ing.amount,
+        amountResult: subAmountResult,
+        buyPrice,
+        craftCost,
+        isCraftable: ing.isCraftable,
+        depth,
+        children,
+      });
+    } else {
+      nodes.push({
+        itemId: ing.itemId,
+        name: ing.name,
+        amount: ing.amount,
+        amountResult: 1,
+        buyPrice,
+        craftCost: 0,
+        isCraftable: ing.isCraftable,
+        depth,
+      });
+    }
+  }
+
+  return nodes;
+}
+
+export async function collectRecipeItemIds(
+  recipeId: number,
+  depth = 0
+): Promise<Set<number>> {
+  const recipe = await getRecipeWithIngredients(recipeId, depth);
+  if (!recipe || depth > MAX_RECIPE_DEPTH) return new Set();
+
+  const ids = new Set<number>();
+  for (const ing of recipe.ingredients) {
+    ids.add(ing.itemId);
+    if (ing.isCraftable && ing.subRecipeId) {
+      const subIds = await collectRecipeItemIds(ing.subRecipeId, depth + 1);
+      subIds.forEach((id) => ids.add(id));
+    }
+  }
+  return ids;
+}
