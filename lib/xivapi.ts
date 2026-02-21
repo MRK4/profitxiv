@@ -1,24 +1,26 @@
 import axios, { type AxiosInstance } from "axios";
 
-const xivapiV1: AxiosInstance = axios.create({
-  baseURL: "https://xivapi.com",
+const xivapi: AxiosInstance = axios.create({
+  baseURL: "https://v2.xivapi.com",
   timeout: 30000,
 });
 
-const xivapiV2: AxiosInstance = axios.create({
-  baseURL: "https://v2.xivapi.com",
-  timeout: 15000,
-});
+/** v2 Icon format: { id, path, path_hr1 } with path_hr1 like "ui/icon/037000/037609_hr1.tex" */
+function buildIconUrlFromV2(icon: { path_hr1?: string } | undefined): string | null {
+  if (!icon?.path_hr1) return null;
+  const path = icon.path_hr1.replace(/^ui\/icon\//, "").replace(/\.tex$/, ".png");
+  return `https://xivapi.com/i/${path}`;
+}
 
 export async function getItemDescription(
   itemId: number
 ): Promise<string | null> {
   try {
-    const { data } = await xivapiV1.get<{ Description?: string }>(
-      `/item/${itemId}`,
-      { params: { columns: "Description" } }
+    const { data } = await xivapi.get<{ fields?: { Description?: string } }>(
+      `/api/sheet/Item/${itemId}`,
+      { params: { fields: "Description" } }
     );
-    const desc = data.Description;
+    const desc = data.fields?.Description;
     if (typeof desc === "string" && desc.trim()) return desc;
     return null;
   } catch {
@@ -26,230 +28,116 @@ export async function getItemDescription(
   }
 }
 
-export async function getItemName(itemId: number): Promise<string | null> {
-  try {
-    const { data } = await xivapiV2.get(
-      `/api/sheet/Item/${itemId}?fields=Name`
-    );
-    return data.fields?.Name ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export async function getItemNames(
-  itemIds: number[]
-): Promise<Record<number, string>> {
-  const results = await Promise.all(
-    itemIds.map(async (id) => {
-      const name = await getItemName(id);
-      return { id, name };
-    })
-  );
-  return Object.fromEntries(
-    results.filter((r) => r.name != null).map((r) => [r.id, r.name!])
-  );
-}
-
 const ITEM_DATA_BATCH_SIZE = 100;
 
-interface ItemSearchResult {
-  ID?: number;
-  Name?: string;
-  Icon?: string;
+interface V2ItemRow {
+  row_id: number;
+  fields?: {
+    Name?: string;
+    Icon?: { path_hr1?: string };
+  };
 }
 
-interface ItemSearchResponse {
-  Results?: ItemSearchResult[];
+interface V2SheetItemResponse {
+  rows?: V2ItemRow[];
 }
 
-function buildIconUrl(iconPath: string | undefined): string | null {
-  if (!iconPath) return null;
-  const hr1Path = iconPath.replace(/\.png$/, "_hr1.png");
-  return `https://xivapi.com${hr1Path.startsWith("/") ? hr1Path : `/${hr1Path}`}`;
-}
-
-async function getItemIconsViaSearch(
-  itemIds: number[]
-): Promise<Record<number, string>> {
-  const icons: Record<number, string> = {};
-  for (let i = 0; i < itemIds.length; i += ITEM_DATA_BATCH_SIZE) {
-    const batch = itemIds.slice(i, i + ITEM_DATA_BATCH_SIZE);
-    const filterValue = batch.join(",");
-    const params = {
-      indexes: "Item",
-      filters: `ID|=${filterValue}`,
-      columns: "ID,Icon",
-      limit: ITEM_DATA_BATCH_SIZE,
-    };
-    try {
-      const { data } = await xivapiV1.get<ItemSearchResponse>("/search", {
-        params,
-      });
-      const results = data.Results ?? [];
-      for (const r of results) {
-        const id = r.ID;
-        if (id != null) {
-          const iconUrl = buildIconUrl(r.Icon);
-          if (iconUrl != null) icons[id] = iconUrl;
-        }
-      }
-    } catch (err) {
-      console.error("[getItemIcons] Search failed:", (err as any)?.response?.data?.Message ?? (err as Error).message);
-      throw err;
-    }
-  }
-  return icons;
-}
-
-async function getItemIconsViaItemEndpoint(
-  itemIds: number[]
-): Promise<Record<number, string>> {
-  const icons: Record<number, string> = {};
-  for (const id of itemIds) {
-    try {
-      const { data } = await xivapiV1.get<{ Icon?: string }>(`/item/${id}`, {
-        params: { columns: "Icon" },
-      });
-      const iconUrl = buildIconUrl(data.Icon);
-      if (iconUrl != null) icons[id] = iconUrl;
-    } catch {
-      // Skip failed items
-    }
-  }
-  return icons;
-}
-
-export async function getItemIcons(
-  itemIds: number[]
-): Promise<Record<number, string>> {
-  if (itemIds.length === 0) return {};
-  try {
-    return await getItemIconsViaSearch(itemIds);
-  } catch {
-    return getItemIconsViaItemEndpoint(itemIds);
-  }
-}
-
+/** Batch fetch names and icons via v2 sheet endpoint */
 export async function getItemData(
   itemIds: number[]
 ): Promise<{
   names: Record<number, string>;
   icons: Record<number, string>;
 }> {
-  const [names, icons] = await Promise.all([
-    getItemNames(itemIds),
-    getItemIcons(itemIds),
-  ]);
+  const names: Record<number, string> = {};
+  const icons: Record<number, string> = {};
+  if (itemIds.length === 0) return { names, icons };
+
+  for (let i = 0; i < itemIds.length; i += ITEM_DATA_BATCH_SIZE) {
+    const batch = itemIds.slice(i, i + ITEM_DATA_BATCH_SIZE);
+    const rowsParam = batch.join(",");
+    try {
+      const { data } = await xivapi.get<V2SheetItemResponse>(
+        "/api/sheet/Item",
+        { params: { fields: "Name,Icon", rows: rowsParam } }
+      );
+      const rows = data.rows ?? [];
+      for (const row of rows) {
+        const id = row.row_id;
+        if (row.fields?.Name != null) names[id] = row.fields.Name;
+        const iconUrl = buildIconUrlFromV2(row.fields?.Icon);
+        if (iconUrl != null) icons[id] = iconUrl;
+      }
+    } catch (err) {
+      console.error("[getItemData] Sheet fetch failed:", (err as Error).message);
+      throw err;
+    }
+  }
   return { names, icons };
 }
 
-interface SearchRecipeResult {
-  ID: number;
-  ItemResult?: { ID: number };
-}
-
-interface SearchResponse {
-  Results?: SearchRecipeResult[];
-}
-
-interface RecipeListResponse {
-  Pagination?: { PageTotal: number };
-  Results?: SearchRecipeResult[];
-}
-
-const SEARCH_BATCH_SIZE = 100;
-const RECIPE_PAGE_SIZE = 1000;
-
-const RECIPE_PAGE_PARALLEL = 4;
-
-/** Fallback when /search is unavailable: scan /recipe list pages for matching ItemResult.ID */
-async function getRecipesForItemsViaList(
-  itemIdsSet: Set<number>
-): Promise<{ craftableIds: Set<number>; recipeMap: Record<number, number> }> {
-  const craftableIds = new Set<number>();
-  const recipeMap: Record<number, number> = {};
-
-  const fetchPage = (page: number) =>
-    xivapiV1.get<RecipeListResponse>("/recipe", {
-      params: {
-        columns: "ID,ItemResult.ID",
-        limit: RECIPE_PAGE_SIZE,
-        page,
-      },
-    });
-
-  const { data: firstPage } = await fetchPage(1);
-  const pageTotal = firstPage.Pagination?.PageTotal ?? 1;
-  const processResults = (results: { ID: number; ItemResult?: { ID: number } }[]) => {
-    for (const r of results) {
-      const itemId = r.ItemResult?.ID;
-      if (itemId != null && itemIdsSet.has(itemId)) {
-        craftableIds.add(itemId);
-        if (!(itemId in recipeMap)) recipeMap[itemId] = r.ID;
-      }
-    }
+interface V2SearchRecipeResult {
+  sheet?: string;
+  row_id: number;
+  fields?: {
+    ItemResult?: { row_id?: number };
   };
-  processResults(firstPage.Results ?? []);
-
-  for (let i = 2; i <= pageTotal; i += RECIPE_PAGE_PARALLEL) {
-    const pages = Array.from(
-      { length: Math.min(RECIPE_PAGE_PARALLEL, pageTotal - i + 1) },
-      (_, j) => i + j
-    );
-    const responses = await Promise.all(pages.map((p) => fetchPage(p)));
-    for (const res of responses) {
-      processResults(res.data.Results ?? []);
-    }
-    if (itemIdsSet.size > 0 && [...itemIdsSet].every((id) => craftableIds.has(id))) {
-      break;
-    }
-  }
-
-  return { craftableIds, recipeMap };
 }
 
+interface V2SearchResponse {
+  results?: V2SearchRecipeResult[];
+}
+
+/** v2: GET /api/search?sheets=Recipe&query=ItemResult={itemId}&fields=ID */
 export async function getRecipesForItems(
   itemIds: number[]
 ): Promise<{ craftableIds: Set<number>; recipeMap: Record<number, number> }> {
   const craftableIds = new Set<number>();
   const recipeMap: Record<number, number> = {};
-  const itemIdsSet = new Set(itemIds);
 
-  for (let i = 0; i < itemIds.length; i += SEARCH_BATCH_SIZE) {
-    const batch = itemIds.slice(i, i + SEARCH_BATCH_SIZE);
-    const filterValue = batch.join(",");
-
-    try {
-      const { data } = await xivapiV1.get<SearchResponse>("/search", {
-        params: {
-          indexes: "Recipe",
-          filters: `ItemResult.ID|=${filterValue}`,
-          columns: "ID,ItemResult.ID",
-          limit: SEARCH_BATCH_SIZE,
-        },
-      });
-
-      const results = data.Results ?? [];
-      for (const r of results) {
-        const itemId = r.ItemResult?.ID;
-        if (itemId != null) {
-          craftableIds.add(itemId);
-          if (!(itemId in recipeMap)) recipeMap[itemId] = r.ID;
+  const CONCURRENCY = 5;
+  for (let i = 0; i < itemIds.length; i += CONCURRENCY) {
+    const batch = itemIds.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (itemId) => {
+        try {
+          const { data } = await xivapi.get<V2SearchResponse>(
+            "/api/search",
+            {
+              params: {
+                sheets: "Recipe",
+                query: `ItemResult=${itemId}`,
+                fields: "ID",
+              },
+            }
+          );
+          const hits = data.results ?? [];
+          const first = hits[0];
+          if (first) {
+            return { itemId, recipeId: first.row_id };
+          }
+          return null;
+        } catch {
+          return null;
         }
+      })
+    );
+    for (const r of results) {
+      if (r) {
+        craftableIds.add(r.itemId);
+        if (!(r.itemId in recipeMap)) recipeMap[r.itemId] = r.recipeId;
       }
-    } catch {
-      return getRecipesForItemsViaList(itemIdsSet);
     }
   }
 
   return { craftableIds, recipeMap };
 }
 
-interface GameContentLinksResponse {
-  GameContentLinks?: {
-    GatheringItem?: { Item?: unknown[] };
-  };
+/** v2: GameContentLinks n'existe plus. On utilise Sources (peut être vide pour certains items). */
+function isGatherableFromSources(sources: unknown): boolean {
+  if (!sources) return false;
+  const str = JSON.stringify(sources);
+  return str.includes("GatheringItem");
 }
 
 export async function getGatherableItems(
@@ -263,12 +151,11 @@ export async function getGatherableItems(
     const results = await Promise.all(
       batch.map(async (id) => {
         try {
-          const { data } = await xivapiV1.get<GameContentLinksResponse>(
-            `/item/${id}`,
-            { params: { columns: "GameContentLinks" } }
+          const { data } = await xivapi.get<{ fields?: { Sources?: unknown } }>(
+            `/api/sheet/Item/${id}`,
+            { params: { fields: "Sources" } }
           );
-          const items = data.GameContentLinks?.GatheringItem?.Item;
-          return Array.isArray(items) && items.length > 0 ? id : null;
+          return isGatherableFromSources(data.fields?.Sources) ? id : null;
         } catch {
           return null;
         }
@@ -309,8 +196,8 @@ export async function getItemMetadata(
   };
 }
 
-const RECIPE_COLUMNS =
-  "ID,AmountResult,AmountIngredient0,AmountIngredient1,AmountIngredient2,AmountIngredient3,AmountIngredient4,AmountIngredient5,AmountIngredient6,AmountIngredient7,ItemIngredient0.ID,ItemIngredient0.Name,ItemIngredient0.PriceLow,ItemIngredient0.PriceMid,ItemIngredient1.ID,ItemIngredient1.Name,ItemIngredient1.PriceLow,ItemIngredient1.PriceMid,ItemIngredient2.ID,ItemIngredient2.Name,ItemIngredient2.PriceLow,ItemIngredient2.PriceMid,ItemIngredient3.ID,ItemIngredient3.Name,ItemIngredient3.PriceLow,ItemIngredient3.PriceMid,ItemIngredient4.ID,ItemIngredient4.Name,ItemIngredient4.PriceLow,ItemIngredient4.PriceMid,ItemIngredient5.ID,ItemIngredient5.Name,ItemIngredient5.PriceLow,ItemIngredient5.PriceMid,ItemIngredient6.ID,ItemIngredient6.Name,ItemIngredient6.PriceLow,ItemIngredient6.PriceMid,ItemIngredient7.ID,ItemIngredient7.Name,ItemIngredient7.PriceLow,ItemIngredient7.PriceMid,ItemIngredientRecipe0,ItemIngredientRecipe1,ItemIngredientRecipe2,ItemIngredientRecipe3,ItemIngredientRecipe4,ItemIngredientRecipe5,ItemIngredientRecipe6,ItemIngredientRecipe7,ItemResult.ID";
+const RECIPE_FIELDS =
+  "AmountIngredient,AmountResult,ItemResult.row_id,Ingredient[].row_id,Ingredient[].Name,Ingredient[].PriceLow,Ingredient[].PriceMid";
 
 export interface RecipeIngredient {
   itemId: number;
@@ -329,34 +216,20 @@ export interface RecipeData {
   ingredients: RecipeIngredient[];
 }
 
-interface XivRecipeRaw {
-  ID: number;
-  AmountResult?: number;
-  AmountIngredient0?: number;
-  AmountIngredient1?: number;
-  AmountIngredient2?: number;
-  AmountIngredient3?: number;
-  AmountIngredient4?: number;
-  AmountIngredient5?: number;
-  AmountIngredient6?: number;
-  AmountIngredient7?: number;
-  ItemIngredient0?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
-  ItemIngredient1?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
-  ItemIngredient2?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
-  ItemIngredient3?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
-  ItemIngredient4?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
-  ItemIngredient5?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
-  ItemIngredient6?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
-  ItemIngredient7?: { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number };
-  ItemIngredientRecipe0?: { ID?: number }[] | null;
-  ItemIngredientRecipe1?: { ID?: number }[] | null;
-  ItemIngredientRecipe2?: { ID?: number }[] | null;
-  ItemIngredientRecipe3?: { ID?: number }[] | null;
-  ItemIngredientRecipe4?: { ID?: number }[] | null;
-  ItemIngredientRecipe5?: { ID?: number }[] | null;
-  ItemIngredientRecipe6?: { ID?: number }[] | null;
-  ItemIngredientRecipe7?: { ID?: number }[] | null;
-  ItemResult?: { ID?: number };
+interface V2RecipeIngredient {
+  row_id?: number;
+  value?: number;
+  fields?: { Name?: string; PriceLow?: number; PriceMid?: number };
+}
+
+interface V2RecipeRaw {
+  row_id: number;
+  fields?: {
+    AmountIngredient?: number[];
+    AmountResult?: number;
+    ItemResult?: { row_id?: number };
+    Ingredient?: V2RecipeIngredient[];
+  };
 }
 
 const MAX_RECIPE_DEPTH = 3;
@@ -367,44 +240,52 @@ export async function getRecipeWithIngredients(
 ): Promise<RecipeData | null> {
   if (depth > MAX_RECIPE_DEPTH) return null;
   try {
-    const { data } = await xivapiV1.get<XivRecipeRaw>(`/recipe/${recipeId}`, {
-      params: { columns: RECIPE_COLUMNS },
+    const { data } = await xivapi.get<V2RecipeRaw>(`/api/sheet/Recipe/${recipeId}`, {
+      params: { fields: RECIPE_FIELDS },
     });
 
-    const itemId = data.ItemResult?.ID ?? 0;
-    const amountResult = data.AmountResult ?? 1;
-    const ingredients: RecipeIngredient[] = [];
+    const fields = data.fields ?? {};
+    const itemId = fields.ItemResult?.row_id ?? 0;
+    const amountResult = fields.AmountResult ?? 1;
+    const amounts = fields.AmountIngredient ?? [];
+    const ingredientsRaw = fields.Ingredient ?? [];
 
-    for (let i = 0; i < 8; i++) {
-      const amount =
-        (data as unknown as Record<string, number>)[`AmountIngredient${i}`] ?? 0;
+    const ingredients: RecipeIngredient[] = [];
+    const ingredientIds: number[] = [];
+
+    for (let i = 0; i < Math.min(8, ingredientsRaw.length, amounts.length); i++) {
+      const amount = amounts[i] ?? 0;
       if (amount <= 0) continue;
 
-      const ing = data as unknown as Record<string, unknown>;
-      const itemIng = ing[`ItemIngredient${i}`] as
-        | { ID?: number; Name?: string; PriceLow?: number; PriceMid?: number }
-        | undefined;
-      const subRecipes = ing[`ItemIngredientRecipe${i}`] as { ID?: number }[] | undefined;
-
-      const ingItemId = itemIng?.ID;
+      const ing = ingredientsRaw[i];
+      const ingItemId = ing?.row_id ?? ing?.value ?? 0;
       if (!ingItemId || ingItemId <= 0) continue;
 
-      const subRecipe = Array.isArray(subRecipes) && subRecipes.length > 0 ? subRecipes[0] : null;
-      const isCraftable = subRecipe != null && (subRecipe.ID ?? 0) > 0;
-
+      ingredientIds.push(ingItemId);
       ingredients.push({
         itemId: ingItemId,
-        name: itemIng?.Name ?? `Item ${ingItemId}`,
+        name: ing?.fields?.Name ?? `Item ${ingItemId}`,
         amount,
-        priceLow: itemIng?.PriceLow ?? 0,
-        priceMid: itemIng?.PriceMid ?? 0,
-        isCraftable,
-        subRecipeId: isCraftable ? (subRecipe!.ID ?? 0) : undefined,
+        priceLow: ing?.fields?.PriceLow ?? 0,
+        priceMid: ing?.fields?.PriceMid ?? 0,
+        isCraftable: false,
+        subRecipeId: undefined,
       });
     }
 
+    if (ingredients.length === 0) return null;
+
+    const { recipeMap } = await getRecipesForItems(ingredientIds);
+    for (const ing of ingredients) {
+      const subRecipeId = recipeMap[ing.itemId];
+      if (subRecipeId != null && subRecipeId > 0) {
+        ing.isCraftable = true;
+        ing.subRecipeId = subRecipeId;
+      }
+    }
+
     return {
-      recipeId: data.ID,
+      recipeId: data.row_id,
       itemId,
       amountResult,
       ingredients,

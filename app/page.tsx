@@ -5,9 +5,11 @@ import {
   ArrowDown,
   ArrowUp,
   ChartColumn,
+  Filter,
   Hammer,
   Info,
   Search,
+  Square,
 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -18,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Table,
@@ -34,6 +37,7 @@ import {
 } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BrailleSpinner } from "@/components/braille-spinner";
@@ -71,6 +75,8 @@ export default function Home() {
   const [selectedDataCenter, setSelectedDataCenter] = useState<string>("");
   const [selectedWorld, setSelectedWorld] = useState<string>("");
   const [scanning, setScanning] = useState(false);
+  const [cancelConfirmPending, setCancelConfirmPending] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const [scanProgress, setScanProgress] = useState<string | null>(null);
   const [progressValue, setProgressValue] = useState(0);
   const [results, setResults] = useState<ProfitResult[]>([]);
@@ -80,6 +86,9 @@ export default function Home() {
   const [showScanAlert, setShowScanAlert] = useState(false);
   const [hideNonCraftable, setHideNonCraftable] = useState(true);
   const [hideNonGatherable, setHideNonGatherable] = useState(true);
+  const [minAvgSalePrice, setMinAvgSalePrice] = useState("");
+  const [minDailyVelocity, setMinDailyVelocity] = useState("");
+  const [minLastSale, setMinLastSale] = useState("");
   const [recipeMap, setRecipeMap] = useState<Record<number, number>>({});
   const [traceItemId, setTraceItemId] = useState<number | null>(null);
   const [traceData, setTraceData] = useState<{
@@ -213,13 +222,33 @@ export default function Home() {
   }, [results, craftSimData]);
 
   const displayedResults = useMemo(() => {
-    const sorted = [...results].sort((a, b) => {
+    let filtered = [...results];
+    const minAvg = minAvgSalePrice.trim() ? parseInt(minAvgSalePrice, 10) : NaN;
+    const minVel = minDailyVelocity.trim()
+      ? parseFloat(minDailyVelocity)
+      : NaN;
+    const minLast = minLastSale.trim() ? parseInt(minLastSale, 10) : NaN;
+    if (!Number.isNaN(minAvg))
+      filtered = filtered.filter((r) => r.avgSalePrice >= minAvg);
+    if (!Number.isNaN(minVel))
+      filtered = filtered.filter((r) => r.dailyVelocity >= minVel);
+    if (!Number.isNaN(minLast))
+      filtered = filtered.filter(
+        (r) => (r.lastSalePrice ?? 0) >= minLast
+      );
+    return filtered.sort((a, b) => {
       const aVal = sortBy === "avgSalePrice" ? a.avgSalePrice : a.dailyVelocity;
       const bVal = sortBy === "avgSalePrice" ? b.avgSalePrice : b.dailyVelocity;
       return sortOrder === "desc" ? bVal - aVal : aVal - bVal;
     });
-    return sorted;
-  }, [results, sortBy, sortOrder]);
+  }, [
+    results,
+    sortBy,
+    sortOrder,
+    minAvgSalePrice,
+    minDailyVelocity,
+    minLastSale,
+  ]);
 
   const handleSort = (column: "avgSalePrice" | "dailyVelocity") => {
     if (sortBy === column) {
@@ -256,6 +285,7 @@ export default function Home() {
     const accumulated = new Map<number, ProfitResult>();
     const url = `/api/universalis/scan-full?world=${encodeURIComponent(selectedWorld)}&dataCenter=${encodeURIComponent(selectedDataCenter)}`;
     const eventSource = new EventSource(url);
+    eventSourceRef.current = eventSource;
 
     eventSource.addEventListener("results", (e: MessageEvent) => {
       const data = JSON.parse(e.data);
@@ -281,6 +311,7 @@ export default function Home() {
 
     eventSource.addEventListener("done", async (e: MessageEvent) => {
       const data = e.data ? JSON.parse(e.data) : {};
+      eventSourceRef.current = null;
       eventSource.close();
 
       const sorted = [...accumulated.values()]
@@ -322,6 +353,7 @@ export default function Home() {
       setProgressValue(100);
       setScanProgress(null);
       setScanning(false);
+      setCancelConfirmPending(false);
       toast.success(
         filtered.length > 0
           ? `Search complete! ${filtered.length} item${filtered.length === 1 ? "" : "s"} found.`
@@ -331,21 +363,44 @@ export default function Home() {
 
     eventSource.addEventListener("scan_error", (e: MessageEvent) => {
       const data = e.data ? JSON.parse(e.data) : {};
+      eventSourceRef.current = null;
       setSearchError(data.message ?? "Scan failed");
       eventSource.close();
       setScanning(false);
+      setCancelConfirmPending(false);
       setScanProgress(null);
       setProgressValue(0);
     });
 
     eventSource.onerror = () => {
       if (eventSource.readyState === EventSource.CLOSED) return;
+      eventSourceRef.current = null;
       setSearchError("Connection lost");
       eventSource.close();
       setScanning(false);
+      setCancelConfirmPending(false);
       setScanProgress(null);
       setProgressValue(0);
     };
+  };
+
+  const handleSearchButtonClick = () => {
+    if (!selectedDataCenter || !selectedWorld) return;
+    if (scanning) {
+      if (cancelConfirmPending) {
+        eventSourceRef.current?.close();
+        eventSourceRef.current = null;
+        setScanning(false);
+        setCancelConfirmPending(false);
+        setScanProgress(null);
+        setProgressValue(0);
+        toast.info("Search cancelled");
+      } else {
+        setCancelConfirmPending(true);
+      }
+    } else {
+      handleStartSearch();
+    }
   };
 
   const formatGil = (n: number) =>
@@ -518,38 +573,114 @@ export default function Home() {
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Switch
-                id="craftable-only"
-                checked={hideNonCraftable}
-                onCheckedChange={setHideNonCraftable}
-              />
-              <Label htmlFor="craftable-only" className="font-mono cursor-pointer">
-                Hide non-craftable items
-              </Label>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch
-                id="gatherable-only"
-                checked={hideNonGatherable}
-                onCheckedChange={setHideNonGatherable}
-              />
-              <Label htmlFor="gatherable-only" className="font-mono cursor-pointer">
-                Hide non-gatherable items
-              </Label>
-            </div>
-          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                className="font-mono gap-2"
+              >
+                <Filter className="size-4" />
+                Filters
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" side="bottom" className="w-80">
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between gap-2">
+                  <Label
+                    htmlFor="craftable-only"
+                    className="font-mono cursor-pointer flex-1"
+                  >
+                    Hide non-craftable items
+                  </Label>
+                  <Switch
+                    id="craftable-only"
+                    checked={hideNonCraftable}
+                    onCheckedChange={setHideNonCraftable}
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <Label
+                    htmlFor="gatherable-only"
+                    className="font-mono cursor-pointer flex-1"
+                  >
+                    Hide non-gatherable items
+                  </Label>
+                  <Switch
+                    id="gatherable-only"
+                    checked={hideNonGatherable}
+                    onCheckedChange={setHideNonGatherable}
+                  />
+                </div>
+                <div className="border-t pt-4 mt-1 space-y-3">
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="min-avg-price"
+                      className="font-mono text-xs"
+                    >
+                      Min avg. sale price (gil)
+                    </Label>
+                    <Input
+                      id="min-avg-price"
+                      type="number"
+                      min={0}
+                      placeholder="Any"
+                      value={minAvgSalePrice}
+                      onChange={(e) => setMinAvgSalePrice(e.target.value)}
+                      className="font-mono h-8"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="min-daily-velocity"
+                      className="font-mono text-xs"
+                    >
+                      Min sales/day
+                    </Label>
+                    <Input
+                      id="min-daily-velocity"
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      placeholder="Any"
+                      value={minDailyVelocity}
+                      onChange={(e) => setMinDailyVelocity(e.target.value)}
+                      className="font-mono h-8"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="min-last-sale"
+                      className="font-mono text-xs"
+                    >
+                      Min last sale (gil)
+                    </Label>
+                    <Input
+                      id="min-last-sale"
+                      type="number"
+                      min={0}
+                      placeholder="Any"
+                      value={minLastSale}
+                      onChange={(e) => setMinLastSale(e.target.value)}
+                      className="font-mono h-8"
+                    />
+                  </div>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button
-              disabled={
-                !selectedDataCenter || !selectedWorld || scanning
-              }
-              onClick={handleStartSearch}
+              disabled={!selectedDataCenter || !selectedWorld}
+              onClick={handleSearchButtonClick}
               className="w-full font-mono sm:w-auto"
             >
               {!scanning && <Search className="size-4" />}
-              {scanning ? "Searching..." : "Search"}
+              {scanning && <Square className="size-4 fill-current" />}
+              {scanning
+                ? cancelConfirmPending
+                  ? "Click again to cancel"
+                  : "Cancel search"
+                : "Search"}
             </Button>
           </div>
         </div>
@@ -681,7 +812,36 @@ export default function Home() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {displayedResults.map((row) => (
+                {displayedResults.length === 0 ? (
+                  <TableRow>
+                    <TableCell>
+                      <Skeleton className="h-5 w-16 rounded" />
+                    </TableCell>
+                    <TableCell>
+                      <span className="inline-flex items-center gap-2">
+                        <Skeleton className="size-6 shrink-0 rounded" />
+                        <Skeleton className="h-5 w-24 rounded" />
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="ml-auto h-5 w-20 rounded" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="ml-auto h-5 w-24 rounded" />
+                    </TableCell>
+                    <TableCell>
+                      <Skeleton className="ml-auto h-5 w-8 rounded" />
+                    </TableCell>
+                    <TableCell className="w-32">
+                      <div className="flex gap-0.5">
+                        <Skeleton className="size-8 rounded" />
+                        <Skeleton className="size-8 rounded" />
+                        <Skeleton className="size-8 rounded" />
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  displayedResults.map((row) => (
                   <TableRow key={row.itemId}>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -809,7 +969,8 @@ export default function Home() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                ))
+                )}
               </TableBody>
             </Table>
           </div>

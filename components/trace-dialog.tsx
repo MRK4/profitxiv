@@ -90,7 +90,7 @@ export function TraceDialog({
           <DialogDescription>
             {traceData?.description
               ? traceData.description.replace(/<\/?[^>]+>/g, "").trim()
-              : "Step-by-step logic to verify data against in-game"}
+              : ""}
           </DialogDescription>
         </DialogHeader>
         {traceLoading ? (

@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
         hostname: "xivapi.com",
         pathname: "/i/**",
       },
+      {
+        protocol: "https",
+        hostname: "v2.xivapi.com",
+        pathname: "/api/asset/**",
+      },
     ],
   },
 };
