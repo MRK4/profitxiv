@@ -8,6 +8,7 @@ const universalisClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     "Content-Type": "application/json",
+    "User-Agent": "ProfitXIV/1.0 (+https://github.com/MRK4/profitxiv)",
   },
   timeout: 10000,
 });
