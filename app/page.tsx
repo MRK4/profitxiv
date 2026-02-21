@@ -470,8 +470,27 @@ export default function Home() {
   };
 
   const handleCraftSim = async (itemId: number) => {
-    const recipeId = recipeMap[itemId];
-    if (!recipeId || !selectedWorld) return;
+    if (!selectedWorld) return;
+    let recipeId = recipeMap[itemId];
+    if (!recipeId) {
+      try {
+        const metadataRes = await apiClient.get<ItemMetadataResponse>(
+          "/api/xivapi/item-metadata",
+          { params: { ids: String(itemId) } }
+        );
+        recipeId = metadataRes.data.recipeMap?.[itemId];
+        if (recipeId) {
+          setRecipeMap((prev) => ({ ...prev, [itemId]: recipeId! }));
+        }
+      } catch {
+        toast.error("Failed to fetch item metadata");
+        return;
+      }
+    }
+    if (!recipeId) {
+      toast.error("This item is not craftable");
+      return;
+    }
     setCraftSimItemId(itemId);
     setCraftSimData(null);
     setCraftSimChecked(new Set());
@@ -933,19 +952,15 @@ export default function Home() {
                                 size="icon"
                                 className="size-8"
                                 onClick={() => handleCraftSim(row.itemId)}
-                                disabled={
-                                  !selectedWorld ||
-                                  !recipeMap[row.itemId]
-                                }
+                                disabled={!selectedWorld}
                               >
                                 <Hammer className="size-4" />
                               </Button>
                             </span>
                           </TooltipTrigger>
                           <TooltipContent>
-                            {scanning
-                              ? "Feature will be available once the scan is complete"
-                              : "Simulate craft cost: choose which materials to craft/gather vs buy"}
+                            Simulate craft cost: choose which materials to
+                            craft/gather vs buy
                           </TooltipContent>
                         </Tooltip>
                         <Tooltip>

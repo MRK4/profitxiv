@@ -140,30 +140,34 @@ function isGatherableFromSources(sources: unknown): boolean {
   return str.includes("GatheringItem");
 }
 
+interface V2ItemSourcesRow {
+  row_id: number;
+  fields?: { Sources?: unknown };
+}
+
 export async function getGatherableItems(
   itemIds: number[]
 ): Promise<Set<number>> {
   const gatherableIds = new Set<number>();
-  const BATCH_SIZE = 50;
+  if (itemIds.length === 0) return gatherableIds;
 
-  for (let i = 0; i < itemIds.length; i += BATCH_SIZE) {
-    const batch = itemIds.slice(i, i + BATCH_SIZE);
-    const results = await Promise.all(
-      batch.map(async (id) => {
-        try {
-          const { data } = await xivapi.get<{ fields?: { Sources?: unknown } }>(
-            `/api/sheet/Item/${id}`,
-            { params: { fields: "Sources" } }
-          );
-          return isGatherableFromSources(data.fields?.Sources) ? id : null;
-        } catch {
-          return null;
+  for (let i = 0; i < itemIds.length; i += ITEM_DATA_BATCH_SIZE) {
+    const batch = itemIds.slice(i, i + ITEM_DATA_BATCH_SIZE);
+    const rowsParam = batch.join(",");
+    try {
+      const { data } = await xivapi.get<{ rows?: V2ItemSourcesRow[] }>(
+        "/api/sheet/Item",
+        { params: { fields: "Sources", rows: rowsParam } }
+      );
+      const rows = data.rows ?? [];
+      for (const row of rows) {
+        if (isGatherableFromSources(row.fields?.Sources)) {
+          gatherableIds.add(row.row_id);
         }
-      })
-    );
-    results.forEach((id) => {
-      if (id != null) gatherableIds.add(id);
-    });
+      }
+    } catch {
+      // Skip failed batch
+    }
   }
 
   return gatherableIds;
@@ -236,7 +240,8 @@ const MAX_RECIPE_DEPTH = 3;
 
 export async function getRecipeWithIngredients(
   recipeId: number,
-  depth = 0
+  depth = 0,
+  resolveCraftability = true
 ): Promise<RecipeData | null> {
   if (depth > MAX_RECIPE_DEPTH) return null;
   try {
@@ -275,12 +280,14 @@ export async function getRecipeWithIngredients(
 
     if (ingredients.length === 0) return null;
 
-    const { recipeMap } = await getRecipesForItems(ingredientIds);
-    for (const ing of ingredients) {
-      const subRecipeId = recipeMap[ing.itemId];
-      if (subRecipeId != null && subRecipeId > 0) {
-        ing.isCraftable = true;
-        ing.subRecipeId = subRecipeId;
+    if (resolveCraftability) {
+      const { recipeMap } = await getRecipesForItems(ingredientIds);
+      for (const ing of ingredients) {
+        const subRecipeId = recipeMap[ing.itemId];
+        if (subRecipeId != null && subRecipeId > 0) {
+          ing.isCraftable = true;
+          ing.subRecipeId = subRecipeId;
+        }
       }
     }
 
@@ -306,7 +313,7 @@ export async function getRecipeIngredientIds(
   for (let i = 0; i < uniqueRecipeIds.length; i += CONCURRENCY) {
     const batch = uniqueRecipeIds.slice(i, i + CONCURRENCY);
     const recipes = await Promise.all(
-      batch.map((rid) => getRecipeWithIngredients(rid, 0))
+      batch.map((rid) => getRecipeWithIngredients(rid, 0, false))
     );
     for (const r of recipes) {
       if (r) {
