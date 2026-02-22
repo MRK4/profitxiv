@@ -5,6 +5,7 @@ const MAX_TAX_RATE = 5;
 const MIN_DAILY_VELOCITY = 0.5;
 const BATCH_SIZE = 100;
 const BATCH_DELAY_MS = 100;
+const PRICE_ANOMALY_THRESHOLD = 50;
 
 const delay = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -103,6 +104,14 @@ export async function GET(request: NextRequest) {
 
             if (profit <= 0) continue;
             if (dailyVelocity < MIN_DAILY_VELOCITY) continue;
+
+            // Exclure les items avec prix anormaux (transfert d'argent entre personnages)
+            if (
+              lastSalePrice > 0 &&
+              lastSalePrice > avgSalePrice * PRICE_ANOMALY_THRESHOLD
+            )
+              continue;
+            if (avgSalePrice > minPrice * PRICE_ANOMALY_THRESHOLD) continue;
 
             batchResults.push({
               itemId: item.itemId,
