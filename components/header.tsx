@@ -56,11 +56,11 @@ export function Header({ githubStars }: HeaderProps) {
             </TooltipTrigger>
             <TooltipContent>About</TooltipContent>
           </Tooltip>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle className="font-mono">About ProfitXIV</DialogTitle>
             </DialogHeader>
-            <div className="flex flex-col gap-3 font-mono text-sm">
+            <div className="flex flex-col gap-4 font-mono text-sm">
               <div>
                 <span className="text-muted-foreground">GitHub repository:</span>{" "}
                 <a
@@ -75,6 +75,51 @@ export function Header({ githubStars }: HeaderProps) {
               <div>
                 <span className="text-muted-foreground">Discord:</span>{" "}
                 {DISCORD_NAME}
+              </div>
+              <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+                <div className="font-medium text-foreground">
+                  How the search works
+                </div>
+                <div className="text-muted-foreground text-xs space-y-1.5">
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 font-medium text-foreground/80">
+                      1
+                    </span>
+                    <span>Select Data Center and World</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 font-medium text-foreground/80">
+                      2
+                    </span>
+                    <span>Click Search → SSE stream to Universalis</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 font-medium text-foreground/80">
+                      3
+                    </span>
+                    <span>
+                      Scan all marketable items (batches of 100), filter by
+                      profit, velocity, anti-transfer
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 font-medium text-foreground/80">
+                      4
+                    </span>
+                    <span>
+                      If filters enabled: fetch metadata (XIVAPI) for craftable
+                      / gatherable
+                    </span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="shrink-0 font-medium text-foreground/80">
+                      5
+                    </span>
+                    <span>
+                      Display top 100, fetch names and icons
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           </DialogContent>
