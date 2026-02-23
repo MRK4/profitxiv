@@ -45,7 +45,7 @@ interface TraceDialogProps {
   recipeMap: Record<number, number>;
   selectedWorld: string;
   hideNonCraftable: boolean;
-  scanning: boolean;
+  loadingMarket: boolean;
 }
 
 export function TraceDialog({
@@ -59,7 +59,7 @@ export function TraceDialog({
   recipeMap,
   selectedWorld,
   hideNonCraftable,
-  scanning,
+  loadingMarket,
 }: TraceDialogProps) {
   return (
     <Dialog
@@ -135,7 +135,7 @@ export function TraceDialog({
                     {traceItemId != null && (
                       (() => {
                         const isCraftable =
-                          !scanning &&
+                          !loadingMarket &&
                           (hideNonCraftable ||
                             Object.keys(recipeMap).length > 0) &&
                           recipeMap[traceItemId] != null;
@@ -144,7 +144,7 @@ export function TraceDialog({
                             <div className="font-medium text-foreground">
                               Craftable
                             </div>
-                            {scanning ? (
+                            {loadingMarket ? (
                               <p className="mt-1 text-muted-foreground text-xs">
                                 Recipe will be available once processing is
                                 complete.

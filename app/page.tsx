@@ -7,7 +7,7 @@ import {
   ChartColumn,
   Hammer,
   Info,
-  Search,
+  RefreshCw,
 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 import {
@@ -34,11 +34,9 @@ import {
 } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BrailleSpinner } from "@/components/braille-spinner";
 import Image from "next/image";
-import { ScanAlertDialog } from "@/components/scan-alert-dialog";
 import { TraceDialog } from "@/components/trace-dialog";
 import { CompareDialog } from "@/components/compare-dialog";
 import { CraftSimDialog } from "@/components/craft-sim-dialog";
@@ -70,14 +68,12 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [selectedDataCenter, setSelectedDataCenter] = useState<string>("");
   const [selectedWorld, setSelectedWorld] = useState<string>("");
-  const [scanning, setScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState<string | null>(null);
-  const [progressValue, setProgressValue] = useState(0);
+  const [loadingMarket, setLoadingMarket] = useState(false);
   const [results, setResults] = useState<ProfitResult[]>([]);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [itemNames, setItemNames] = useState<Record<number, string>>({});
   const [itemIcons, setItemIcons] = useState<Record<number, string>>({});
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [showScanAlert, setShowScanAlert] = useState(false);
   const [hideNonCraftable, setHideNonCraftable] = useState(true);
   const [hideNonGatherable, setHideNonGatherable] = useState(true);
   const [recipeMap, setRecipeMap] = useState<Record<number, number>>({});
@@ -133,6 +129,8 @@ export default function Home() {
   } | null>(null);
   const [craftSimLoading, setCraftSimLoading] = useState(false);
   const [craftSimChecked, setCraftSimChecked] = useState<Set<string>>(new Set());
+  const [triggeringScan, setTriggeringScan] = useState(false);
+  const isDev = process.env.NODE_ENV === "development";
 
   const selectedDC = dataCenters.find((dc) => dc.name === selectedDataCenter);
   const worlds = selectedDC?.worlds ?? [];
@@ -235,55 +233,33 @@ export default function Home() {
     setSelectedWorld("");
     setResults([]);
     setSearchError(null);
-    setScanProgress(null);
+    setLastUpdated(null);
   };
 
-  const handleStartSearch = () => {
-    if (!selectedDataCenter || !selectedWorld) return;
-    setShowScanAlert(true);
-  };
-
-  const handleConfirmSearch = () => {
-    if (!selectedDataCenter || !selectedWorld) return;
-    setShowScanAlert(false);
-    setScanning(true);
+  const handleLoadMarket = async () => {
+    if (!selectedDataCenter) return;
+    setLoadingMarket(true);
     setSearchError(null);
     setResults([]);
     setRecipeMap({});
-    setScanProgress("Scanning Universalis...");
-    setProgressValue(0);
+    setLastUpdated(null);
 
-    const accumulated = new Map<number, ProfitResult>();
-    const url = `/api/universalis/scan-full?world=${encodeURIComponent(selectedWorld)}&dataCenter=${encodeURIComponent(selectedDataCenter)}`;
-    const eventSource = new EventSource(url);
+    try {
+      const res = await apiClient.get<{
+        data: { items: ProfitResult[]; lastUpdated: number };
+      }>(`/api/market`, {
+        params: { dataCenter: selectedDataCenter },
+      });
 
-    eventSource.addEventListener("results", (e: MessageEvent) => {
-      const data = JSON.parse(e.data);
-      const batchResults = data.results ?? [];
-      for (const r of batchResults) {
-        const existing = accumulated.get(r.itemId);
-        if (!existing || r.profit > existing.profit) {
-          accumulated.set(r.itemId, r);
-        }
+      const snapshot = res.data.data;
+      if (!snapshot || !snapshot.items) {
+        setSearchError(
+          "No market data for this datacenter yet. Data is updated 3× per day."
+        );
+        return;
       }
-      const sorted = [...accumulated.values()]
-        .sort((a, b) => b.profit - a.profit)
-        .slice(0, 100);
-      setResults(sorted);
-      const totalBatches = data.totalBatches ?? 1;
-      const batch = data.batch ?? 0;
-      const pct = Math.round((batch / totalBatches) * 85);
-      setProgressValue(pct);
-      setScanProgress(
-        `Batch ${data.batch}/${data.totalBatches} - ${sorted.length} items found`
-      );
-    });
 
-    eventSource.addEventListener("done", async (e: MessageEvent) => {
-      const data = e.data ? JSON.parse(e.data) : {};
-      eventSource.close();
-
-      const sorted = [...accumulated.values()]
+      const sorted = [...snapshot.items]
         .sort((a, b) => b.profit - a.profit)
         .slice(0, 100);
 
@@ -291,9 +267,6 @@ export default function Home() {
       const filters = { hideNonCraftable, hideNonGatherable };
 
       if ((hideNonCraftable || hideNonGatherable) && sorted.length > 0) {
-        setScanProgress("Fetching item metadata (XIVAPI)...");
-        setProgressValue(90);
-
         try {
           const itemIds = sorted.map((r) => r.itemId);
           const metadataRes = await apiClient.get<ItemMetadataResponse>(
@@ -319,33 +292,48 @@ export default function Home() {
       }
 
       setResults(filtered);
-      setProgressValue(100);
-      setScanProgress(null);
-      setScanning(false);
+      setLastUpdated(snapshot.lastUpdated);
       toast.success(
         filtered.length > 0
-          ? `Search complete! ${filtered.length} item${filtered.length === 1 ? "" : "s"} found.`
-          : "Search complete."
+          ? `${filtered.length} item${filtered.length === 1 ? "" : "s"} loaded.`
+          : "No items match your filters."
       );
-    });
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === "object" && "response" in err
+          ? (err as { response?: { data?: { error?: string } } }).response?.data
+              ?.error
+          : null;
+      setSearchError(msg ?? "Failed to load market data");
+    } finally {
+      setLoadingMarket(false);
+    }
+  };
 
-    eventSource.addEventListener("scan_error", (e: MessageEvent) => {
-      const data = e.data ? JSON.parse(e.data) : {};
-      setSearchError(data.message ?? "Scan failed");
-      eventSource.close();
-      setScanning(false);
-      setScanProgress(null);
-      setProgressValue(0);
-    });
+  useEffect(() => {
+    if (!selectedDataCenter || loading) return;
+    handleLoadMarket();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDataCenter, loading]);
 
-    eventSource.onerror = () => {
-      if (eventSource.readyState === EventSource.CLOSED) return;
-      setSearchError("Connection lost");
-      eventSource.close();
-      setScanning(false);
-      setScanProgress(null);
-      setProgressValue(0);
-    };
+  const handleTriggerScan = async () => {
+    setTriggeringScan(true);
+    try {
+      const res = await apiClient.post("/api/dev/trigger-scan");
+      toast.success(
+        `Scan OK: ${res.data.dataCentersScanned} DCs, ${res.data.itemCount} items`
+      );
+      if (selectedDataCenter) handleLoadMarket();
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === "object" && "response" in err
+          ? (err as { response?: { data?: { error?: string } } }).response?.data
+              ?.error
+          : null;
+      toast.error(msg ?? "Scan failed");
+    } finally {
+      setTriggeringScan(false);
+    }
   };
 
   const formatGil = (n: number) =>
@@ -497,9 +485,7 @@ export default function Home() {
               value={selectedWorld}
               onValueChange={(v) => {
                 setSelectedWorld(v);
-                setResults([]);
                 setSearchError(null);
-                setScanProgress(null);
               }}
               disabled={!selectedDataCenter}
             >
@@ -519,6 +505,26 @@ export default function Home() {
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-4">
+            {isDev && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="font-mono"
+                disabled={triggeringScan}
+                onClick={handleTriggerScan}
+              >
+                {triggeringScan ? (
+                  <span className="inline-flex shrink-0">
+                    <BrailleSpinner />
+                  </span>
+                ) : (
+                  <RefreshCw className="size-4 shrink-0" />
+                )}
+                <span className="ml-1.5">
+                  {triggeringScan ? "Chargement..." : "Charger les données"}
+                </span>
+              </Button>
+            )}
             <div className="flex items-center gap-2">
               <Switch
                 id="craftable-only"
@@ -540,35 +546,24 @@ export default function Home() {
               </Label>
             </div>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button
-              disabled={
-                !selectedDataCenter || !selectedWorld || scanning
-              }
-              onClick={handleStartSearch}
-              className="w-full font-mono sm:w-auto"
-            >
-              {!scanning && <Search className="size-4" />}
-              {scanning ? "Searching..." : "Search"}
-            </Button>
-          </div>
         </div>
 
-        {scanning && (
-          <div className="w-full space-y-2">
-            <p className="text-muted-foreground font-mono text-sm flex items-center gap-2">
-              <BrailleSpinner />
-              {scanProgress}
-            </p>
-            <Progress value={progressValue} className="h-2" />
-          </div>
+        {loadingMarket && (
+          <p className="text-muted-foreground font-mono text-sm flex items-center gap-2">
+            <BrailleSpinner />
+            Loading market data...
+          </p>
         )}
 
-        <ScanAlertDialog
-          open={showScanAlert}
-          onOpenChange={setShowScanAlert}
-          onConfirm={handleConfirmSearch}
-        />
+        {lastUpdated && results.length > 0 && (
+          <p className="text-muted-foreground font-mono text-xs">
+            Last updated:{" "}
+            {new Date(lastUpdated).toLocaleString(undefined, {
+              dateStyle: "short",
+              timeStyle: "short",
+            })}
+          </p>
+        )}
 
         {searchError && (
           <p className="text-destructive font-mono text-sm">{searchError}</p>
@@ -783,8 +778,8 @@ export default function Home() {
                             </span>
                           </TooltipTrigger>
                           <TooltipContent>
-                            {scanning
-                              ? "Feature will be available once the scan is complete"
+                            {loadingMarket
+                              ? "Feature will be available once the market is loaded"
                               : "Simulate craft cost: choose which materials to craft/gather vs buy"}
                           </TooltipContent>
                         </Tooltip>
@@ -815,10 +810,9 @@ export default function Home() {
           </div>
         )}
 
-        {results.length === 0 && !scanning && !searchError && (
+        {results.length === 0 && !loadingMarket && !searchError && (
           <p className="text-muted-foreground font-mono text-xs">
-            Select a Data Center and World, then click Search to find items with
-            the highest resale value.
+            Select a Data Center to load items with the highest resale value.
           </p>
         )}
 
@@ -833,7 +827,7 @@ export default function Home() {
           recipeMap={recipeMap}
           selectedWorld={selectedWorld}
           hideNonCraftable={hideNonCraftable}
-          scanning={scanning}
+          loadingMarket={loadingMarket}
         />
 
         <CompareDialog
