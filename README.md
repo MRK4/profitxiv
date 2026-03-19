@@ -31,30 +31,27 @@ flowchart TB
     Cron[Scan market board]
     Cron -->|100 items batch - 150ms| Univ[Universalis API]
     Univ --> Cron
-    Cron -->|Aggregated results| Redis[(Redis)]
+    Cron -->|Enrich - 200ms queue| XIV1[XIVAPI]
+    XIV1 --> Cron
+    Cron -->|Enriched snapshot| Redis[(Redis)]
   end
 
   subgraph userflow [User interaction]
     U1[Select DC and World]
     U2[Market API]
     U3[Display list]
-    U4[Items API]
-    U5[Metadata API]
     U6[Market comparison]
     U7[Trace]
-    XIV[XIVAPI]
+    Univ2[Universalis API]
+    XIV2[XIVAPI]
     U1 --> U2
     U2 --> Redis
     Redis --> U3
-    U3 --> U4
-    U3 --> U5
-    U4 -->|Names icons - 200ms queue| XIV
-    U5 -->|Craftable gatherable - 200ms queue| XIV
     U3 --> U6
     U3 --> U7
-    U6 -->|Live data| Univ
-    U7 -->|Live data and description| Univ
-    U7 --> XIV
+    U6 -->|Live data| Univ2
+    U7 -->|Live data and description| Univ2
+    U7 --> XIV2
   end
 ```
 
@@ -95,9 +92,11 @@ Then open [http://localhost:3000](http://localhost:3000)
 
 ### Scripts
 
-- `npm run dev` — development server
-- `npm run build` — production build
-- `npm run start` — production server
+- `npm run dev` Start the Next.js development server with hot-reload.
+- `npm run build` Create an optimized production build.
+- `npm run start` Run the production server (after `npm run build`).
+- `npm run lint` Run ESLint to check and lint the code.
+- `npm run scan:market` Trigger the Universalis market scan manually (requires the dev server running and `CRON_SECRET` in `.env.local`).
 
 ---
 

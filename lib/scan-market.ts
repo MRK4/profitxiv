@@ -6,6 +6,16 @@ import {
   type MarketSnapshot,
   type MarketItemSnapshot,
 } from "@/lib/market-snapshot";
+import { getItemData, getItemMetadata } from "@/lib/xivapi";
+
+type EnrichmentCache = {
+  names: Record<number, string>;
+  icons: Record<number, string>;
+  craftableIds: Set<number>;
+  gatherableIds: Set<number>;
+  recipeMap: Record<number, number>;
+  recipeComponentIds: Set<number>;
+};
 
 const MAX_TAX_RATE = 5;
 const MIN_DAILY_VELOCITY = 0.5;
@@ -84,6 +94,15 @@ export async function runScanMarket(log: (msg: string) => void = console.log) {
   log("[scan-market] Redis connected");
 
   const now = Date.now();
+
+  const enrichmentCache: EnrichmentCache = {
+    names: {},
+    icons: {},
+    craftableIds: new Set(),
+    gatherableIds: new Set(),
+    recipeMap: {},
+    recipeComponentIds: new Set(),
+  };
 
   for (const dc of dcWithWorlds) {
     if (!dc.firstWorld) {
@@ -186,11 +205,52 @@ export async function runScanMarket(log: (msg: string) => void = console.log) {
       await delay(BATCH_DELAY_MS);
     }
 
+    if (items.length > 0) {
+      const dcItemIds = items.map((i) => i.itemId);
+      const idsToFetch = dcItemIds.filter((id) => !(id in enrichmentCache.names));
+      if (idsToFetch.length > 0) {
+        const enrichStart = Date.now();
+        try {
+          const [itemData, metadata] = await Promise.all([
+            getItemData(idsToFetch),
+            getItemMetadata(idsToFetch),
+          ]);
+          Object.assign(enrichmentCache.names, itemData.names);
+          Object.assign(enrichmentCache.icons, itemData.icons);
+          metadata.craftableIds.forEach((id) => enrichmentCache.craftableIds.add(id));
+          metadata.gatherableIds.forEach((id) => enrichmentCache.gatherableIds.add(id));
+          Object.assign(enrichmentCache.recipeMap, metadata.recipeMap);
+          metadata.recipeComponentIds.forEach((id) =>
+            enrichmentCache.recipeComponentIds.add(id)
+          );
+          log(
+            `[scan-market] ${dc.name}: XIVAPI enriched ${idsToFetch.length} items in ${Math.round((Date.now() - enrichStart) / 1000)}s`
+          );
+        } catch (err) {
+          log(
+            `[scan-market] ${dc.name}: XIVAPI enrichment failed: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+      for (const item of items) {
+        item.name = enrichmentCache.names[item.itemId];
+        item.icon = enrichmentCache.icons[item.itemId];
+        item.isCraftable = enrichmentCache.craftableIds.has(item.itemId);
+        item.isGatherable = enrichmentCache.gatherableIds.has(item.itemId);
+      }
+    }
+
     const snapshot: MarketSnapshot = {
       lastUpdated: now,
       world: dc.firstWorld,
       dataCenter: dc.name,
       items,
+      recipeMap: Object.fromEntries(
+        items
+          .filter((i) => i.itemId in enrichmentCache.recipeMap)
+          .map((i) => [i.itemId, enrichmentCache.recipeMap[i.itemId]])
+      ),
+      recipeComponentIds: [...enrichmentCache.recipeComponentIds],
     };
 
     const key = marketKey(dc.name);

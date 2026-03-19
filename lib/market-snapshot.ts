@@ -6,6 +6,11 @@ export interface MarketItemSnapshot {
   lastSaleTimestamp?: number;
   profit: number;
   dailyVelocity: number;
+  /** XIVAPI: pre-computed during cron scan */
+  name?: string;
+  icon?: string;
+  isCraftable?: boolean;
+  isGatherable?: boolean;
 }
 
 export interface MarketSnapshot {
@@ -13,6 +18,9 @@ export interface MarketSnapshot {
   world: string;
   dataCenter: string;
   items: MarketItemSnapshot[];
+  /** XIVAPI metadata: pre-computed during cron scan */
+  recipeMap?: Record<number, number>;
+  recipeComponentIds?: number[];
 }
 
 export const MARKET_KEY_PREFIX = "market:";

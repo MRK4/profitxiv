@@ -41,6 +41,7 @@ import { TraceDialog } from "@/components/trace-dialog";
 import { CompareDialog } from "@/components/compare-dialog";
 import { CraftSimDialog } from "@/components/craft-sim-dialog";
 import { Header } from "@/components/header";
+import type { MarketSnapshot } from "@/lib/market-snapshot";
 import {
   buildItemMetadata,
   shouldDisplayItem,
@@ -61,6 +62,11 @@ interface ProfitResult {
   lastSaleTimestamp?: number;
   profit: number;
   dailyVelocity: number;
+  /** From XIVAPI when pre-enriched during cron scan */
+  name?: string;
+  icon?: string;
+  isCraftable?: boolean;
+  isGatherable?: boolean;
 }
 
 export default function Home() {
@@ -331,13 +337,11 @@ export default function Home() {
     setLastUpdated(null);
 
     try {
-      const res = await apiClient.get<{
-        data: { items: ProfitResult[]; lastUpdated: number };
-      }>(`/api/market`, {
+      const res = await apiClient.get<{ data: MarketSnapshot }>(`/api/market`, {
         params: { dataCenter: selectedDataCenter, world: selectedWorld },
       });
 
-      const snapshot = res.data.data;
+      const snapshot = res.data.data as MarketSnapshot;
       if (!snapshot || !snapshot.items) {
         setSearchError(
           "No market data for this datacenter yet. Data is updated 3× per day."
@@ -347,24 +351,54 @@ export default function Home() {
 
       const sorted = [...snapshot.items]
         .sort((a, b) => b.profit - a.profit)
-        .slice(0, 100);
+        .slice(0, 100) as ProfitResult[];
 
-      try {
-        const itemIds = sorted.map((r) => r.itemId);
-        const metadataRes = await apiClient.get<ItemMetadataResponse>(
-          "/api/xivapi/item-metadata",
-          { params: { ids: itemIds.join(",") } }
-        );
+      const isEnriched =
+        snapshot.recipeMap != null ||
+        (sorted.length > 0 && "name" in sorted[0] && sorted[0].name != null);
+
+      if (isEnriched) {
         const metadataResponse: ItemMetadataResponse = {
-          gatherableIds: metadataRes.data.gatherableIds ?? [],
-          craftableIds: metadataRes.data.craftableIds ?? [],
-          recipeMap: metadataRes.data.recipeMap ?? {},
-          recipeComponentIds: metadataRes.data.recipeComponentIds ?? [],
+          craftableIds: sorted.filter((r) => r.isCraftable).map((r) => r.itemId),
+          gatherableIds: sorted.filter((r) => r.isGatherable).map((r) => r.itemId),
+          recipeMap: snapshot.recipeMap ?? {},
+          recipeComponentIds: snapshot.recipeComponentIds ?? [],
         };
         setItemMetadata(metadataResponse);
         setRecipeMap(metadataResponse.recipeMap);
-      } catch {
-        setSearchError("Unable to fetch item metadata (XIVAPI)");
+
+        const namesFromSnapshot: Record<number, string> = {};
+        const iconsFromSnapshot: Record<number, string> = {};
+        for (const r of sorted) {
+          if (r.name) {
+            namesFromSnapshot[r.itemId] = r.name;
+            fetchedNamesRef.current.add(r.itemId);
+          }
+          if (r.icon) {
+            iconsFromSnapshot[r.itemId] = r.icon;
+            fetchedIconsRef.current.add(r.itemId);
+          }
+        }
+        setItemNames((prev) => ({ ...prev, ...namesFromSnapshot }));
+        setItemIcons((prev) => ({ ...prev, ...iconsFromSnapshot }));
+      } else {
+        try {
+          const itemIds = sorted.map((r) => r.itemId);
+          const metadataRes = await apiClient.get<ItemMetadataResponse>(
+            "/api/xivapi/item-metadata",
+            { params: { ids: itemIds.join(",") } }
+          );
+          const metadataResponse: ItemMetadataResponse = {
+            gatherableIds: metadataRes.data.gatherableIds ?? [],
+            craftableIds: metadataRes.data.craftableIds ?? [],
+            recipeMap: metadataRes.data.recipeMap ?? {},
+            recipeComponentIds: metadataRes.data.recipeComponentIds ?? [],
+          };
+          setItemMetadata(metadataResponse);
+          setRecipeMap(metadataResponse.recipeMap);
+        } catch {
+          setSearchError("Unable to fetch item metadata (XIVAPI)");
+        }
       }
 
       setResults(sorted);
