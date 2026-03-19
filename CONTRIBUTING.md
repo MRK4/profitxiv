@@ -59,7 +59,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 To see data in the app, trigger a market scan. Ensure the dev server is running, then:
 
 ```bash
-npm run scan:market
+npm run scan:dev:market
 ```
 
 This runs the Universalis + XIVAPI scan and stores results in Redis. The first run takes several minutes.
@@ -106,3 +106,7 @@ Before submitting a PR, please ensure:
 6. **Conventions**
    - Follow the existing code style (ESLint and Prettier if configured).
    - Prefer French for user-facing strings when the app targets French users, or follow the project's language choice.
+
+---
+
+## Thank you for your contribution!
