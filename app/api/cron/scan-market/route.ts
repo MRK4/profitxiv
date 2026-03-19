@@ -11,7 +11,14 @@ export async function GET(request: NextRequest) {
 
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  const isDev = process.env.NODE_ENV === "development";
+  const host =
+    request.headers.get("host") ?? request.headers.get("x-forwarded-host") ?? "";
+  const isLocalhost =
+    host.startsWith("localhost") || host.startsWith("127.0.0.1");
+
+  const skipAuth = isDev || isLocalhost;
+  if (!skipAuth && cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     console.log("[cron/scan-market] Unauthorized: missing or invalid CRON_SECRET");
     return new Response("Unauthorized", { status: 401 });
   }

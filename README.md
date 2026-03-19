@@ -23,6 +23,13 @@ This project is built for fun and gameplay optimization.
 
 ---
 
+## Disclaimer
+
+This project is a tool created for gameplay optimization and experimentation.  
+All data belongs to their respective sources and APIs.
+
+---
+
 ## How it works
 
 ```mermaid
@@ -81,29 +88,9 @@ flowchart TB
 
 ---
 
-## Getting Started
+## Contributing
 
-```bash
-npm install
-npm run dev
-```
-
-Then open [http://localhost:3000](http://localhost:3000)
-
-### Scripts
-
-- `npm run dev` Start the Next.js development server with hot-reload.
-- `npm run build` Create an optimized production build.
-- `npm run start` Run the production server (after `npm run build`).
-- `npm run lint` Run ESLint to check and lint the code.
-- `npm run scan:market` Trigger the Universalis market scan manually (requires the dev server running and `CRON_SECRET` in `.env.local`).
-
----
-
-## Disclaimer
-
-This project is a tool created for gameplay optimization and experimentation.  
-All data belongs to their respective sources and APIs.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup instructions and contribution guidelines.
 
 ---
 
