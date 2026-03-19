@@ -25,13 +25,41 @@ This project is built for fun and gameplay optimization.
 
 ## How it works
 
-1. User selects Data Center and World
-2. Search triggers a full scan (SSE) of all marketable items
-3. For each item: average sale price per unit, last sale price per unit (with date when available), daily velocity
-4. Optional: filter out non-craftable items via XIVAPI
-5. Results sorted by average sale price (default), sortable by sales/day
-6. **Market comparison** (chart icon): opens a modal to compare prices across all worlds in the selected Data Center
-7. **Trace dialog** (info icon): step-by-step data for verification
+```mermaid
+flowchart TB
+  subgraph cron [Cron job - 3x per day]
+    Cron[Scan market board]
+    Cron -->|100 items per batch, 150 ms between each| Univ[Universalis API]
+    Univ --> Cron
+    Cron -->|Aggregated results| Redis[(Redis)]
+  end
+
+  subgraph user [User interaction]
+    U1[Select DC + World] --> U2[/api/market]
+    U2 --> Redis
+    Redis --> U3[Display list]
+    U3 --> U4[/api/xivapi/items]
+    U3 --> U5[/api/xivapi/item-metadata]
+    U4 -->|Names, icons - 200 ms queue| XIV[XIVAPI]
+    U5 -->|Craftable, gatherable - 200 ms queue| XIV
+    U3 --> U6[Market comparison]
+    U3 --> U7[Detailed trace]
+    U6 -->|Live data| Univ
+    U7 -->|Live data + description| Univ
+    U7 --> XIV
+  end
+```
+
+
+
+1. A background cron job periodically scans all marketable items from Universalis and stores aggregated results in Redis (3× per day). Between each batch of 100 items, the scan waits **150 ms** before the next Universalis request. XIVAPI calls (names, icons, metadata) pass through a global queue with **200 ms** between requests (~5 req/s) and use a **1000 ms** backoff on rate limit (429).
+2. User selects a Data Center and a World.
+3. The app loads the latest cached snapshot for that Data Center from `/api/market` (no long-running client-side scan).
+4. For each item: average sale price per unit, last sale price per unit (with date when available), daily velocity and net profit are precomputed during the scan.
+5. Optional: filter out non-craftable / non-gatherable items via XIVAPI metadata.
+6. Results are sorted by profit by default; you can sort by average sale price or sales/day.
+7. **Market comparison** (chart icon): opens a modal to compare prices across all worlds in the selected Data Center (live Universalis data).
+8. **Trace dialog** (info icon): shows step-by-step data for a specific world to verify prices and calculations.
 
 ---
 
@@ -41,8 +69,10 @@ This project is built for fun and gameplay optimization.
 - TypeScript
 - Tailwind CSS
 - shadcn/ui (Radix UI)
-- [Universalis API](https://docs.universalis.app/)
-- [XIVAPI](https://xivapi.com/) (item names, craftable check)
+- [Universalis API](https://docs.universalis.app/) (market data)
+- [XIVAPI](https://xivapi.com/) (item names, craftable check, item metadata)
+- Redis (caching)
+- Vercel (hosting)
 
 ---
 
@@ -75,9 +105,9 @@ All data belongs to their respective sources and APIs.
 This project is licensed under the GNU Affero General Public License v3.0 (AGPLv3).
 
 You are free to use, modify, and distribute this software, but you must:
+
 - Give appropriate credit
 - Disclose source code if you run a modified version publicly
 - Keep the same license
 
 See the [LICENSE](./LICENSE.md) file for full details.
-

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -77,6 +77,7 @@ export default function Home() {
   const [hideNonCraftable, setHideNonCraftable] = useState(true);
   const [hideNonGatherable, setHideNonGatherable] = useState(true);
   const [recipeMap, setRecipeMap] = useState<Record<number, number>>({});
+  const [itemMetadata, setItemMetadata] = useState<ItemMetadataResponse | null>(null);
   const [traceItemId, setTraceItemId] = useState<number | null>(null);
   const [traceData, setTraceData] = useState<{
     steps: Array<{
@@ -129,8 +130,27 @@ export default function Home() {
   } | null>(null);
   const [craftSimLoading, setCraftSimLoading] = useState(false);
   const [craftSimChecked, setCraftSimChecked] = useState<Set<string>>(new Set());
-  const [triggeringScan, setTriggeringScan] = useState(false);
-  const isDev = process.env.NODE_ENV === "development";
+
+  const statusText = useMemo(() => {
+    if (loadingMarket) {
+      return "Loading cached Universalis snapshot…";
+    }
+
+    if (!lastUpdated) {
+      return "Waiting for first market scan…";
+    }
+
+    const now = Date.now();
+    const ageMinutes = (now - lastUpdated) / (1000 * 60);
+
+    if (ageMinutes < 30) {
+      return "Everything's up to date.";
+    }
+    if (ageMinutes < 180) {
+      return "Market scan completed a few hours ago.";
+    }
+    return "Market scan data may be stale.";
+  }, [loadingMarket, lastUpdated]);
 
   const selectedDC = dataCenters.find((dc) => dc.name === selectedDataCenter);
   const worlds = selectedDC?.worlds ?? [];
@@ -170,54 +190,118 @@ export default function Home() {
     }
   }, []);
 
-  const fetchedIdsRef = useRef<Set<number>>(new Set());
+  const fetchedNamesRef = useRef<Set<number>>(new Set());
+  const fetchedIconsRef = useRef<Set<number>>(new Set());
+  const iconsAbortRef = useRef<boolean>(false);
 
-  useEffect(() => {
-    const collectIdsFromTree = (
-      nodes: Array<{ itemId: number; children?: unknown[] }>
-    ): number[] =>
+  const collectIdsFromTree = useCallback(
+    (nodes: Array<{ itemId: number; children?: unknown[] }>): number[] =>
       nodes.flatMap((n) => [
         n.itemId,
         ...(n.children
           ? collectIdsFromTree(n.children as Array<{ itemId: number; children?: unknown[] }>)
           : []),
-      ]);
+      ]),
+    []
+  );
 
-    const ids = new Set(results.map((r) => r.itemId));
+  useEffect(() => {
+    const idsForNames = new Set(results.map((r) => r.itemId));
     if (craftSimData?.tree) {
-      collectIdsFromTree(craftSimData.tree).forEach((id) => ids.add(id));
+      collectIdsFromTree(craftSimData.tree).forEach((id) => idsForNames.add(id));
     }
 
     if (results.length === 0) {
       setItemNames({});
       setItemIcons({});
-      fetchedIdsRef.current = new Set();
+      fetchedNamesRef.current = new Set();
+      fetchedIconsRef.current = new Set();
     }
-    if (ids.size === 0) return;
+    if (idsForNames.size === 0) return;
 
-    const idsToFetch = [...ids].filter((id) => !fetchedIdsRef.current.has(id));
+    const idsToFetch = [...idsForNames].filter((id) => !fetchedNamesRef.current.has(id));
     if (idsToFetch.length === 0) return;
 
     apiClient
-      .get("/api/xivapi/items", { params: { ids: idsToFetch.join(",") } })
+      .get("/api/xivapi/items", {
+        params: { ids: idsToFetch.join(","), namesOnly: "true" },
+      })
       .then((res) => {
         const names = res.data.names ?? {};
-        const icons = res.data.icons ?? {};
-        idsToFetch.forEach((id) => fetchedIdsRef.current.add(id));
+        idsToFetch.forEach((id) => fetchedNamesRef.current.add(id));
         setItemNames((prev) => ({ ...prev, ...names }));
-        setItemIcons((prev) => ({ ...prev, ...icons }));
       })
       .catch(() => {});
-  }, [results, craftSimData]);
+  }, [results, craftSimData, collectIdsFromTree]);
+
+  useEffect(() => {
+    const listIds = results.map((r) => r.itemId);
+    if (listIds.length === 0) return;
+
+    iconsAbortRef.current = false;
+    const BATCH_SIZE = 20;
+    const DELAY_MS = 400;
+
+    const idsToFetch = [...new Set(listIds)].filter(
+      (id) => !fetchedIconsRef.current.has(id)
+    );
+    if (idsToFetch.length === 0) return;
+
+    const batches: number[][] = [];
+    for (let i = 0; i < idsToFetch.length; i += BATCH_SIZE) {
+      batches.push(idsToFetch.slice(i, i + BATCH_SIZE));
+    }
+
+    let batchIndex = 0;
+
+    const fetchNextBatch = () => {
+      if (iconsAbortRef.current || batchIndex >= batches.length) return;
+
+      const batch = batches[batchIndex];
+      batchIndex += 1;
+
+      apiClient
+        .get("/api/xivapi/items", {
+          params: { ids: batch.join(","), iconsOnly: "true" },
+        })
+        .then((res) => {
+          if (iconsAbortRef.current) return;
+          const icons = res.data.icons ?? {};
+          batch.forEach((id) => fetchedIconsRef.current.add(id));
+          setItemIcons((prev) => ({ ...prev, ...icons }));
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (batchIndex < batches.length) {
+            setTimeout(fetchNextBatch, DELAY_MS);
+          }
+        });
+    };
+
+    fetchNextBatch();
+
+    return () => {
+      iconsAbortRef.current = true;
+    };
+  }, [results]);
 
   const displayedResults = useMemo(() => {
-    const sorted = [...results].sort((a, b) => {
+    const filters = { hideNonCraftable, hideNonGatherable };
+    let items = results;
+
+    if (itemMetadata && (hideNonCraftable || hideNonGatherable)) {
+      items = results.filter((r) => {
+        const metadata = buildItemMetadata(r.itemId, itemMetadata);
+        return shouldDisplayItem(r.itemId, metadata, filters);
+      });
+    }
+
+    return [...items].sort((a, b) => {
       const aVal = sortBy === "avgSalePrice" ? a.avgSalePrice : a.dailyVelocity;
       const bVal = sortBy === "avgSalePrice" ? b.avgSalePrice : b.dailyVelocity;
       return sortOrder === "desc" ? bVal - aVal : aVal - bVal;
     });
-    return sorted;
-  }, [results, sortBy, sortOrder]);
+  }, [results, sortBy, sortOrder, hideNonCraftable, hideNonGatherable, itemMetadata]);
 
   const handleSort = (column: "avgSalePrice" | "dailyVelocity") => {
     if (sortBy === column) {
@@ -232,23 +316,25 @@ export default function Home() {
     setSelectedDataCenter(value);
     setSelectedWorld("");
     setResults([]);
+    setItemMetadata(null);
     setSearchError(null);
     setLastUpdated(null);
   };
 
   const handleLoadMarket = async () => {
-    if (!selectedDataCenter) return;
+    if (!selectedDataCenter || !selectedWorld) return;
     setLoadingMarket(true);
     setSearchError(null);
     setResults([]);
     setRecipeMap({});
+    setItemMetadata(null);
     setLastUpdated(null);
 
     try {
       const res = await apiClient.get<{
         data: { items: ProfitResult[]; lastUpdated: number };
       }>(`/api/market`, {
-        params: { dataCenter: selectedDataCenter },
+        params: { dataCenter: selectedDataCenter, world: selectedWorld },
       });
 
       const snapshot = res.data.data;
@@ -263,40 +349,28 @@ export default function Home() {
         .sort((a, b) => b.profit - a.profit)
         .slice(0, 100);
 
-      let filtered = sorted;
-      const filters = { hideNonCraftable, hideNonGatherable };
-
-      if ((hideNonCraftable || hideNonGatherable) && sorted.length > 0) {
-        try {
-          const itemIds = sorted.map((r) => r.itemId);
-          const metadataRes = await apiClient.get<ItemMetadataResponse>(
-            "/api/xivapi/item-metadata",
-            { params: { ids: itemIds.join(",") } }
-          );
-          const metadataResponse: ItemMetadataResponse = {
-            gatherableIds: metadataRes.data.gatherableIds ?? [],
-            craftableIds: metadataRes.data.craftableIds ?? [],
-            recipeMap: metadataRes.data.recipeMap ?? {},
-            recipeComponentIds: metadataRes.data.recipeComponentIds ?? [],
-          };
-
-          filtered = sorted.filter((r) => {
-            const metadata = buildItemMetadata(r.itemId, metadataResponse);
-            return shouldDisplayItem(r.itemId, metadata, filters);
-          });
-
-          setRecipeMap(metadataResponse.recipeMap);
-        } catch {
-          setSearchError("Unable to fetch item metadata (XIVAPI)");
-        }
+      try {
+        const itemIds = sorted.map((r) => r.itemId);
+        const metadataRes = await apiClient.get<ItemMetadataResponse>(
+          "/api/xivapi/item-metadata",
+          { params: { ids: itemIds.join(",") } }
+        );
+        const metadataResponse: ItemMetadataResponse = {
+          gatherableIds: metadataRes.data.gatherableIds ?? [],
+          craftableIds: metadataRes.data.craftableIds ?? [],
+          recipeMap: metadataRes.data.recipeMap ?? {},
+          recipeComponentIds: metadataRes.data.recipeComponentIds ?? [],
+        };
+        setItemMetadata(metadataResponse);
+        setRecipeMap(metadataResponse.recipeMap);
+      } catch {
+        setSearchError("Unable to fetch item metadata (XIVAPI)");
       }
 
-      setResults(filtered);
+      setResults(sorted);
       setLastUpdated(snapshot.lastUpdated);
       toast.success(
-        filtered.length > 0
-          ? `${filtered.length} item${filtered.length === 1 ? "" : "s"} loaded.`
-          : "No items match your filters."
+        `${sorted.length} item${sorted.length === 1 ? "" : "s"} loaded.`
       );
     } catch (err: unknown) {
       const msg =
@@ -311,30 +385,10 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (!selectedDataCenter || loading) return;
+    if (!selectedDataCenter || !selectedWorld || loading) return;
     handleLoadMarket();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDataCenter, loading]);
-
-  const handleTriggerScan = async () => {
-    setTriggeringScan(true);
-    try {
-      const res = await apiClient.post("/api/dev/trigger-scan");
-      toast.success(
-        `Scan OK: ${res.data.dataCentersScanned} DCs, ${res.data.itemCount} items`
-      );
-      if (selectedDataCenter) handleLoadMarket();
-    } catch (err: unknown) {
-      const msg =
-        err && typeof err === "object" && "response" in err
-          ? (err as { response?: { data?: { error?: string } } }).response?.data
-              ?.error
-          : null;
-      toast.error(msg ?? "Scan failed");
-    } finally {
-      setTriggeringScan(false);
-    }
-  };
+  }, [selectedDataCenter, selectedWorld, loading]);
 
   const formatGil = (n: number) =>
     n.toLocaleString("en-US", { maximumFractionDigits: 0 });
@@ -452,7 +506,11 @@ export default function Home() {
   return (
     <div className="flex min-h-screen flex-col items-center bg-background font-sans">
       <main className="flex w-full max-w-full flex-col gap-8 p-8 lg:max-w-6xl xl:max-w-7xl">
-        <Header githubStars={githubStars} />
+        <Header
+          githubStars={githubStars}
+          statusText={statusText}
+          statusLoading={loadingMarket}
+        />
 
         <div className="flex flex-col gap-6 sm:flex-row">
           <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -505,33 +563,17 @@ export default function Home() {
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-4">
-            {isDev && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="font-mono"
-                disabled={triggeringScan}
-                onClick={handleTriggerScan}
-              >
-                {triggeringScan ? (
-                  <span className="inline-flex shrink-0">
-                    <BrailleSpinner />
-                  </span>
-                ) : (
-                  <RefreshCw className="size-4 shrink-0" />
-                )}
-                <span className="ml-1.5">
-                  {triggeringScan ? "Chargement..." : "Charger les données"}
-                </span>
-              </Button>
-            )}
             <div className="flex items-center gap-2">
               <Switch
                 id="craftable-only"
                 checked={hideNonCraftable}
                 onCheckedChange={setHideNonCraftable}
+                disabled={!selectedDataCenter || !selectedWorld}
               />
-              <Label htmlFor="craftable-only" className="font-mono cursor-pointer">
+              <Label
+                htmlFor="craftable-only"
+                className={`font-mono ${!selectedDataCenter || !selectedWorld ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+              >
                 Hide non-craftable items
               </Label>
             </div>
@@ -540,8 +582,12 @@ export default function Home() {
                 id="gatherable-only"
                 checked={hideNonGatherable}
                 onCheckedChange={setHideNonGatherable}
+                disabled={!selectedDataCenter || !selectedWorld}
               />
-              <Label htmlFor="gatherable-only" className="font-mono cursor-pointer">
+              <Label
+                htmlFor="gatherable-only"
+                className={`font-mono ${!selectedDataCenter || !selectedWorld ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+              >
                 Hide non-gatherable items
               </Label>
             </div>
@@ -676,7 +722,17 @@ export default function Home() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {displayedResults.map((row) => (
+                {displayedResults.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={6}
+                      className="text-center text-muted-foreground font-mono text-sm py-8"
+                    >
+                      No items match your filters.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  displayedResults.map((row) => (
                   <TableRow key={row.itemId}>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -804,7 +860,7 @@ export default function Home() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                )))}
               </TableBody>
             </Table>
           </div>
@@ -812,7 +868,7 @@ export default function Home() {
 
         {results.length === 0 && !loadingMarket && !searchError && (
           <p className="text-muted-foreground font-mono text-xs">
-            Select a Data Center to load items with the highest resale value.
+            Select a Data Center and a World to load items with the highest resale value.
           </p>
         )}
 

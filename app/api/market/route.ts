@@ -3,6 +3,8 @@ import { getRedis } from "@/lib/redis";
 import { marketKey } from "@/lib/market-snapshot";
 import type { MarketSnapshot } from "@/lib/market-snapshot";
 
+export const runtime = "nodejs";
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const dataCenter = searchParams.get("dataCenter");

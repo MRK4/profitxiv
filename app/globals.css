@@ -138,3 +138,51 @@
     font-family: var(--font-geist-mono), ui-monospace, monospace;
   }
 }
+
+@layer components {
+  .status-flip-container {
+    position: relative;
+  }
+
+  .status-flip-item {
+    display: block;
+    white-space: nowrap;
+  }
+
+  @keyframes status-flip-out {
+    0% {
+      transform: translateY(0);
+      filter: blur(0);
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(-100%);
+      filter: blur(4px);
+      opacity: 0;
+    }
+  }
+
+  @keyframes status-flip-in {
+    0% {
+      transform: translateY(100%);
+      filter: blur(4px);
+      opacity: 0;
+    }
+    100% {
+      transform: translateY(0);
+      filter: blur(0);
+      opacity: 1;
+    }
+  }
+
+  .status-flip-out {
+    animation: status-flip-out 0.2s ease-out forwards;
+    position: absolute;
+    left: 0;
+    right: 0;
+  }
+
+  .status-flip-in {
+    animation: status-flip-in 0.22s ease-out forwards;
+  }
+}

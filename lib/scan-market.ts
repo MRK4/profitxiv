@@ -51,6 +51,7 @@ function extractFromAggregated(
 }
 
 export async function runScanMarket(log: (msg: string) => void = console.log) {
+  const startedAt = Date.now();
   log("[scan-market] Starting scan...");
 
   const [dataCenters, worlds, marketableIds] = await Promise.all([
@@ -75,7 +76,9 @@ export async function runScanMarket(log: (msg: string) => void = console.log) {
     batches.push(itemIds.slice(i, i + BATCH_SIZE));
   }
 
-  log(`[scan-market] Will process ${dcWithWorlds.length} DCs, ${batches.length} batches per DC`);
+  log(
+    `[scan-market] Will process ${dcWithWorlds.length} DCs, ${batches.length} batches per DC (batchSize=${BATCH_SIZE}, maxItemsPerDC=${MAX_ITEMS_PER_DC}, delay=${BATCH_DELAY_MS}ms)`
+  );
 
   const redis = await getRedis();
   log("[scan-market] Redis connected");
@@ -88,7 +91,9 @@ export async function runScanMarket(log: (msg: string) => void = console.log) {
       continue;
     }
 
-    log(`[scan-market] Processing DC: ${dc.name}`);
+    log(
+      `[scan-market] Processing DC: ${dc.name} (firstWorld=${dc.firstWorld}, batches=${batches.length})`
+    );
 
     let taxRate = MAX_TAX_RATE / 100;
     try {
@@ -100,10 +105,18 @@ export async function runScanMarket(log: (msg: string) => void = console.log) {
         }
       }
     } catch (err) {
-      log(`[scan-market] Tax rate fetch failed for ${dc.firstWorld}: ${err}`);
+      log(
+        `[scan-market] Tax rate fetch failed for ${dc.firstWorld}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
     }
 
     const items: MarketItemSnapshot[] = [];
+    let consideredCount = 0;
+    let skippedInvalidCount = 0;
+    let skippedVelocityCount = 0;
+    let skippedProfitCount = 0;
 
     for (let i = 0; i < batches.length; i++) {
       const batchIds = batches[i];
@@ -124,15 +137,31 @@ export async function runScanMarket(log: (msg: string) => void = console.log) {
 
       for (const item of results) {
         const extracted = extractFromAggregated(item.nq ?? null);
-        if (!extracted) continue;
+        if (!extracted) {
+          skippedInvalidCount++;
+          continue;
+        }
 
-        const { minPrice, avgSalePrice, lastSalePrice, lastSaleTimestamp, dailyVelocity } =
-          extracted;
-        if (dailyVelocity < MIN_DAILY_VELOCITY) continue;
+        consideredCount++;
+
+        const {
+          minPrice,
+          avgSalePrice,
+          lastSalePrice,
+          lastSaleTimestamp,
+          dailyVelocity,
+        } = extracted;
+        if (dailyVelocity < MIN_DAILY_VELOCITY) {
+          skippedVelocityCount++;
+          continue;
+        }
 
         const netSellPrice = avgSalePrice * (1 - taxRate);
         const profit = Math.round(netSellPrice - minPrice);
-        if (profit <= 0) continue;
+        if (profit <= 0) {
+          skippedProfitCount++;
+          continue;
+        }
 
         items.push({
           itemId: item.itemId,
@@ -144,6 +173,14 @@ export async function runScanMarket(log: (msg: string) => void = console.log) {
           profit,
           dailyVelocity: Math.round(dailyVelocity * 10) / 10,
         });
+      }
+
+      if ((i + 1) % 10 === 0 || i === batches.length - 1) {
+        log(
+          `[scan-market] ${dc.name}: processed batch ${i + 1}/${
+            batches.length
+          } (aggregatedItems=${results.length}, accumulatedItems=${items.length})`
+        );
       }
 
       await delay(BATCH_DELAY_MS);
@@ -161,10 +198,13 @@ export async function runScanMarket(log: (msg: string) => void = console.log) {
       EX: MARKET_TTL_SECONDS,
     });
 
-    log(`[scan-market] ${dc.name}: stored ${items.length} items`);
+    log(
+      `[scan-market] ${dc.name}: stored ${items.length} items (considered=${consideredCount}, skippedInvalid=${skippedInvalidCount}, skippedLowVelocity=${skippedVelocityCount}, skippedNoProfit=${skippedProfitCount}, ttl=${MARKET_TTL_SECONDS}s)`
+    );
   }
 
-  log("[scan-market] Scan complete");
+  const elapsedMs = Date.now() - startedAt;
+  log(`[scan-market] Scan complete in ${Math.round(elapsedMs / 1000)}s`);
   return {
     dataCentersScanned: dcWithWorlds.length,
     itemCount: itemIds.length,

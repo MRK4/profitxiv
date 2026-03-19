@@ -1,4 +1,4 @@
-import axios, { type AxiosInstance } from "axios";
+import axios, { type AxiosInstance, type AxiosRequestConfig } from "axios";
 
 const xivapiV1: AxiosInstance = axios.create({
   baseURL: "https://xivapi.com",
@@ -10,11 +10,86 @@ const xivapiV2: AxiosInstance = axios.create({
   timeout: 15000,
 });
 
+const XIVAPI_QUEUE_INTERVAL_MS = 200; // ~5 req/s
+type QueueTask = () => Promise<void>;
+const queue: QueueTask[] = [];
+let queueRunning = false;
+
+async function runQueue(): Promise<void> {
+  if (queueRunning || queue.length === 0) return;
+  queueRunning = true;
+  while (queue.length > 0) {
+    const task = queue.shift()!;
+    try {
+      await task();
+    } catch (err) {
+      console.error("[xivapi] Queue task failed:", err);
+    }
+    if (queue.length > 0) {
+      await new Promise((r) => setTimeout(r, XIVAPI_QUEUE_INTERVAL_MS));
+    }
+  }
+  queueRunning = false;
+}
+
+async function executeWithRetry<T>(
+  client: AxiosInstance,
+  url: string,
+  config?: AxiosRequestConfig
+): Promise<{ data: T }> {
+  try {
+    return await client.get<T>(url, config);
+  } catch (err: unknown) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    const message =
+      (err as { response?: { data?: { Message?: string } }; message?: string })
+        ?.response?.data?.Message ??
+      (err as Error)?.message;
+    if (status === 429) {
+      console.warn(
+        "[xivapi] Rate limited (429), retrying once after backoff...",
+        message
+      );
+      await new Promise((r) => setTimeout(r, 1000));
+      return client.get<T>(url, config);
+    }
+    throw err;
+  }
+}
+
+function xivRequest<T = unknown>(
+  client: AxiosInstance,
+  url: string,
+  config?: AxiosRequestConfig
+): Promise<{ data: T }> {
+  return new Promise((resolve, reject) => {
+    queue.push(async () => {
+      try {
+        const result = await executeWithRetry<T>(client, url, config);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+    void runQueue();
+  });
+}
+
+const xivGetV1 = <T = unknown>(
+  url: string,
+  config?: AxiosRequestConfig
+): Promise<{ data: T }> => xivRequest<T>(xivapiV1, url, config);
+
+const xivGetV2 = <T = unknown>(
+  url: string,
+  config?: AxiosRequestConfig
+): Promise<{ data: T }> => xivRequest<T>(xivapiV2, url, config);
+
 export async function getItemDescription(
   itemId: number
 ): Promise<string | null> {
   try {
-    const { data } = await xivapiV1.get<{ Description?: string }>(
+    const { data } = await xivGetV1<{ Description?: string }>(
       `/item/${itemId}`,
       { params: { columns: "Description" } }
     );
@@ -28,7 +103,7 @@ export async function getItemDescription(
 
 export async function getItemName(itemId: number): Promise<string | null> {
   try {
-    const { data } = await xivapiV2.get(
+    const { data } = await xivGetV2<{ fields?: { Name?: string } }>(
       `/api/sheet/Item/${itemId}?fields=Name`
     );
     return data.fields?.Name ?? null;
@@ -40,15 +115,37 @@ export async function getItemName(itemId: number): Promise<string | null> {
 export async function getItemNames(
   itemIds: number[]
 ): Promise<Record<number, string>> {
-  const results = await Promise.all(
-    itemIds.map(async (id) => {
-      const name = await getItemName(id);
-      return { id, name };
-    })
-  );
-  return Object.fromEntries(
-    results.filter((r) => r.name != null).map((r) => [r.id, r.name!])
-  );
+  if (itemIds.length === 0) return {};
+  const names: Record<number, string> = {};
+  for (let i = 0; i < itemIds.length; i += ITEM_DATA_BATCH_SIZE) {
+    const batch = itemIds.slice(i, i + ITEM_DATA_BATCH_SIZE);
+    const filterValue = batch.join(",");
+    try {
+      const { data } = await xivGetV1<ItemSearchResponse>("/search", {
+        params: {
+          indexes: "Item",
+          filters: `ID|=${filterValue}`,
+          columns: "ID,Name",
+          limit: ITEM_DATA_BATCH_SIZE,
+        },
+      });
+      const results = data.Results ?? [];
+      for (const r of results) {
+        const id = r.ID;
+        const name = r.Name;
+        if (id != null && typeof name === "string" && name.trim()) {
+          names[id] = name;
+        }
+      }
+    } catch (err) {
+      console.error(
+        "[getItemNames] Search failed:",
+        (err as Error)?.message ?? err
+      );
+      throw err;
+    }
+  }
+  return names;
 }
 
 const ITEM_DATA_BATCH_SIZE = 100;
@@ -83,7 +180,7 @@ async function getItemIconsViaSearch(
       limit: ITEM_DATA_BATCH_SIZE,
     };
     try {
-      const { data } = await xivapiV1.get<ItemSearchResponse>("/search", {
+      const { data } = await xivGetV1<ItemSearchResponse>("/search", {
         params,
       });
       const results = data.Results ?? [];
@@ -108,7 +205,7 @@ async function getItemIconsViaItemEndpoint(
   const icons: Record<number, string> = {};
   for (const id of itemIds) {
     try {
-      const { data } = await xivapiV1.get<{ Icon?: string }>(`/item/${id}`, {
+      const { data } = await xivGetV1<{ Icon?: string }>(`/item/${id}`, {
         params: { columns: "Icon" },
       });
       const iconUrl = buildIconUrl(data.Icon);
@@ -161,8 +258,6 @@ interface RecipeListResponse {
 const SEARCH_BATCH_SIZE = 100;
 const RECIPE_PAGE_SIZE = 1000;
 
-const RECIPE_PAGE_PARALLEL = 4;
-
 /** Fallback when /search is unavailable: scan /recipe list pages for matching ItemResult.ID */
 async function getRecipesForItemsViaList(
   itemIdsSet: Set<number>
@@ -171,7 +266,7 @@ async function getRecipesForItemsViaList(
   const recipeMap: Record<number, number> = {};
 
   const fetchPage = (page: number) =>
-    xivapiV1.get<RecipeListResponse>("/recipe", {
+    xivGetV1<RecipeListResponse>("/recipe", {
       params: {
         columns: "ID,ItemResult.ID",
         limit: RECIPE_PAGE_SIZE,
@@ -192,15 +287,9 @@ async function getRecipesForItemsViaList(
   };
   processResults(firstPage.Results ?? []);
 
-  for (let i = 2; i <= pageTotal; i += RECIPE_PAGE_PARALLEL) {
-    const pages = Array.from(
-      { length: Math.min(RECIPE_PAGE_PARALLEL, pageTotal - i + 1) },
-      (_, j) => i + j
-    );
-    const responses = await Promise.all(pages.map((p) => fetchPage(p)));
-    for (const res of responses) {
-      processResults(res.data.Results ?? []);
-    }
+  for (let i = 2; i <= pageTotal; i++) {
+    const { data } = await fetchPage(i);
+    processResults(data.Results ?? []);
     if (itemIdsSet.size > 0 && [...itemIdsSet].every((id) => craftableIds.has(id))) {
       break;
     }
@@ -221,7 +310,7 @@ export async function getRecipesForItems(
     const filterValue = batch.join(",");
 
     try {
-      const { data } = await xivapiV1.get<SearchResponse>("/search", {
+      const { data } = await xivGetV1<SearchResponse>("/search", {
         params: {
           indexes: "Recipe",
           filters: `ItemResult.ID|=${filterValue}`,
@@ -256,27 +345,20 @@ export async function getGatherableItems(
   itemIds: number[]
 ): Promise<Set<number>> {
   const gatherableIds = new Set<number>();
-  const BATCH_SIZE = 50;
 
-  for (let i = 0; i < itemIds.length; i += BATCH_SIZE) {
-    const batch = itemIds.slice(i, i + BATCH_SIZE);
-    const results = await Promise.all(
-      batch.map(async (id) => {
-        try {
-          const { data } = await xivapiV1.get<GameContentLinksResponse>(
-            `/item/${id}`,
-            { params: { columns: "GameContentLinks" } }
-          );
-          const items = data.GameContentLinks?.GatheringItem?.Item;
-          return Array.isArray(items) && items.length > 0 ? id : null;
-        } catch {
-          return null;
-        }
-      })
-    );
-    results.forEach((id) => {
-      if (id != null) gatherableIds.add(id);
-    });
+  for (const id of itemIds) {
+    try {
+      const { data } = await xivGetV1<GameContentLinksResponse>(
+        `/item/${id}`,
+        { params: { columns: "GameContentLinks" } }
+      );
+      const items = data.GameContentLinks?.GatheringItem?.Item;
+      if (Array.isArray(items) && items.length > 0) {
+        gatherableIds.add(id);
+      }
+    } catch {
+      // Skip failed items
+    }
   }
 
   return gatherableIds;
@@ -367,7 +449,7 @@ export async function getRecipeWithIngredients(
 ): Promise<RecipeData | null> {
   if (depth > MAX_RECIPE_DEPTH) return null;
   try {
-    const { data } = await xivapiV1.get<XivRecipeRaw>(`/recipe/${recipeId}`, {
+    const { data } = await xivGetV1<XivRecipeRaw>(`/recipe/${recipeId}`, {
       params: { columns: RECIPE_COLUMNS },
     });
 
