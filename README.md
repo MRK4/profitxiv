@@ -27,25 +27,33 @@ This project is built for fun and gameplay optimization.
 
 ```mermaid
 flowchart TB
-  subgraph cron [Cron job - 3x per day]
+  subgraph cronjob [Cron job - 3x per day]
     Cron[Scan market board]
-    Cron -->|100 items per batch, 150 ms between each| Univ[Universalis API]
+    Cron -->|100 items batch - 150ms| Univ[Universalis API]
     Univ --> Cron
     Cron -->|Aggregated results| Redis[(Redis)]
   end
 
-  subgraph user [User interaction]
-    U1[Select DC + World] --> U2[/api/market]
+  subgraph userflow [User interaction]
+    U1[Select DC and World]
+    U2[Market API]
+    U3[Display list]
+    U4[Items API]
+    U5[Metadata API]
+    U6[Market comparison]
+    U7[Trace]
+    XIV[XIVAPI]
+    U1 --> U2
     U2 --> Redis
-    Redis --> U3[Display list]
-    U3 --> U4[/api/xivapi/items]
-    U3 --> U5[/api/xivapi/item-metadata]
-    U4 -->|Names, icons - 200 ms queue| XIV[XIVAPI]
-    U5 -->|Craftable, gatherable - 200 ms queue| XIV
-    U3 --> U6[Market comparison]
-    U3 --> U7[Detailed trace]
+    Redis --> U3
+    U3 --> U4
+    U3 --> U5
+    U4 -->|Names icons - 200ms queue| XIV
+    U5 -->|Craftable gatherable - 200ms queue| XIV
+    U3 --> U6
+    U3 --> U7
     U6 -->|Live data| Univ
-    U7 -->|Live data + description| Univ
+    U7 -->|Live data and description| Univ
     U7 --> XIV
   end
 ```
