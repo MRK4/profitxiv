@@ -21,13 +21,13 @@ npm install
 
 ### 3. Configure environment variables
 
-Copy the example env file and fill in the values:
+Copy the example env file and fill in the values. For local development, use `.env.development.local` (used by `npm run dev` and `npm run scan:dev:market`):
 
 ```bash
-cp .env.local.example .env.local
+cp .env.local.example .env.development.local
 ```
 
-Edit `.env.local` with:
+Edit `.env.development.local` with:
 
 - **REDIS_URL** — Connection string for Redis (required for market data caching). You can use a local Redis instance or a hosted service.
 - **CRON_SECRET** — Optional for local development. The scan route skips auth when the request targets `localhost` or when `NODE_ENV=development`, so you can run `npm run scan:dev:market` without setting it. Required in production (e.g. Vercel Cron).
@@ -44,7 +44,7 @@ docker run -d -p 6379:6379 redis:alpine
 redis-server
 ```
 
-Set `REDIS_URL` to `redis://localhost:6379` in `.env.local`.
+Set `REDIS_URL` to `redis://localhost:6379` in `.env.development.local`.
 
 ### 5. Start the development server
 
@@ -68,14 +68,14 @@ This runs the Universalis + XIVAPI scan and stores results in Redis. The first r
 
 ## Scripts
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start the Next.js development server with hot-reload. |
-| `npm run build` | Create an optimized production build. |
-| `npm run start` | Run the production server (requires `npm run build` first). |
-| `npm run lint` | Run ESLint to check and lint the code. |
+| Command                   | Description                                                                                                                                                       |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`             | Start the Next.js development server with hot-reload.                                                                                                             |
+| `npm run build`           | Create an optimized production build.                                                                                                                             |
+| `npm run start`           | Run the production server (requires `npm run build` first).                                                                                                       |
+| `npm run lint`            | Run ESLint to check and lint the code.                                                                                                                            |
 | `npm run scan:dev:market` | Trigger the Universalis market scan manually. Requires the dev server running. `CRON_SECRET` is optional for local dev (the route accepts requests without auth). |
-| `npm run scan:market` | Trigger the Universalis market scan manually. Requires the production server running. `CRON_SECRET` is required. |
+| `npm run scan:market`     | Trigger the Universalis market scan manually. Requires the production server running. `CRON_SECRET` is required.                                                  |
 
 ---
 
