@@ -1,4 +1,5 @@
 import { runScanMarket } from "@/lib/scan-market";
+import { createScanLoggerWithFile } from "@/lib/scan-logger";
 
 export async function POST() {
   if (process.env.NODE_ENV !== "development") {
@@ -9,7 +10,7 @@ export async function POST() {
   console.log("[dev/trigger-scan] Manual scan triggered");
 
   try {
-    const result = await runScanMarket((msg) => console.log(msg));
+    const result = await runScanMarket(createScanLoggerWithFile());
     console.log("[dev/trigger-scan] Success:", result);
     return Response.json({ ok: true, ...result });
   } catch (err) {

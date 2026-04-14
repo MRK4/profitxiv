@@ -112,91 +112,104 @@ export async function getItemName(itemId: number): Promise<string | null> {
   }
 }
 
+interface ItemSheetBatchRow {
+  row_id?: number;
+  fields?: {
+    Name?: string;
+    Icon?: unknown;
+  };
+}
+
+interface ItemSheetBatchResponse {
+  rows?: ItemSheetBatchRow[];
+}
+
+function normalizeIconFieldV2(icon: unknown): string | null {
+  if (icon == null) return null;
+  if (typeof icon === "string") {
+    const t = icon.trim();
+    if (!t) return null;
+    if (t.startsWith("http")) return t;
+    return buildIconUrl(t);
+  }
+  if (typeof icon === "object" && icon !== null) {
+    const o = icon as Record<string, unknown>;
+    const url = o.url ?? o.href;
+    if (typeof url === "string") return normalizeIconFieldV2(url);
+  }
+  return null;
+}
+
+/**
+ * Batch fetch Item Name + Icon via XIVAPI v2 sheet (avoids broken v1 /search filters).
+ */
+async function fetchItemSheetNameIconV2(
+  itemIds: number[]
+): Promise<{ names: Record<number, string>; icons: Record<number, string> }> {
+  const names: Record<number, string> = {};
+  const icons: Record<number, string> = {};
+  if (itemIds.length === 0) return { names, icons };
+
+  const rowsParam = itemIds.join(",");
+  try {
+    const { data } = await xivGetV2<ItemSheetBatchResponse>(
+      `/api/sheet/Item?fields=Name,Icon&rows=${rowsParam}`
+    );
+    const rows = data.rows ?? [];
+    for (const row of rows) {
+      const id = row.row_id;
+      if (id == null) continue;
+      const n = row.fields?.Name;
+      if (typeof n === "string" && n.trim()) names[id] = n;
+      const iconUrl = normalizeIconFieldV2(row.fields?.Icon);
+      if (iconUrl) icons[id] = iconUrl;
+    }
+  } catch (err) {
+    console.error(
+      "[fetchItemSheetNameIconV2] failed:",
+      (err as Error)?.message ?? err
+    );
+    throw err;
+  }
+  return { names, icons };
+}
+
+const ITEM_DATA_BATCH_SIZE = 100;
+
 export async function getItemNames(
   itemIds: number[]
 ): Promise<Record<number, string>> {
   if (itemIds.length === 0) return {};
   const names: Record<number, string> = {};
-  for (let i = 0; i < itemIds.length; i += ITEM_DATA_BATCH_SIZE) {
-    const batch = itemIds.slice(i, i + ITEM_DATA_BATCH_SIZE);
-    const filterValue = batch.join(",");
+  const unique = [...new Set(itemIds)];
+
+  for (let i = 0; i < unique.length; i += ITEM_DATA_BATCH_SIZE) {
+    const batch = unique.slice(i, i + ITEM_DATA_BATCH_SIZE);
     try {
-      const { data } = await xivGetV1<ItemSearchResponse>("/search", {
-        params: {
-          indexes: "Item",
-          filters: `ID|=${filterValue}`,
-          columns: "ID,Name",
-          limit: ITEM_DATA_BATCH_SIZE,
-        },
-      });
-      const results = data.Results ?? [];
-      for (const r of results) {
-        const id = r.ID;
-        const name = r.Name;
-        if (id != null && typeof name === "string" && name.trim()) {
-          names[id] = name;
-        }
+      const { names: batchNames } = await fetchItemSheetNameIconV2(batch);
+      Object.assign(names, batchNames);
+    } catch {
+      for (const id of batch) {
+        const n = await getItemName(id);
+        if (n) names[id] = n;
       }
-    } catch (err) {
-      console.error(
-        "[getItemNames] Search failed:",
-        (err as Error)?.message ?? err
-      );
-      throw err;
     }
   }
+
+  for (const id of unique) {
+    if (!(id in names) || !names[id]?.trim()) {
+      const n = await getItemName(id);
+      if (n) names[id] = n;
+    }
+  }
+
   return names;
-}
-
-const ITEM_DATA_BATCH_SIZE = 100;
-
-interface ItemSearchResult {
-  ID?: number;
-  Name?: string;
-  Icon?: string;
-}
-
-interface ItemSearchResponse {
-  Results?: ItemSearchResult[];
 }
 
 function buildIconUrl(iconPath: string | undefined): string | null {
   if (!iconPath) return null;
   const hr1Path = iconPath.replace(/\.png$/, "_hr1.png");
   return `https://xivapi.com${hr1Path.startsWith("/") ? hr1Path : `/${hr1Path}`}`;
-}
-
-async function getItemIconsViaSearch(
-  itemIds: number[]
-): Promise<Record<number, string>> {
-  const icons: Record<number, string> = {};
-  for (let i = 0; i < itemIds.length; i += ITEM_DATA_BATCH_SIZE) {
-    const batch = itemIds.slice(i, i + ITEM_DATA_BATCH_SIZE);
-    const filterValue = batch.join(",");
-    const params = {
-      indexes: "Item",
-      filters: `ID|=${filterValue}`,
-      columns: "ID,Icon",
-      limit: ITEM_DATA_BATCH_SIZE,
-    };
-    try {
-      const { data } = await xivGetV1<ItemSearchResponse>("/search", {
-        params,
-      });
-      const results = data.Results ?? [];
-      for (const r of results) {
-        const id = r.ID;
-        if (id != null) {
-          const iconUrl = buildIconUrl(r.Icon);
-          if (iconUrl != null) icons[id] = iconUrl;
-        }
-      }
-    } catch (err) {
-      console.error("[getItemIcons] Search failed:", (err as any)?.response?.data?.Message ?? (err as Error).message);
-      throw err;
-    }
-  }
-  return icons;
 }
 
 async function getItemIconsViaItemEndpoint(
@@ -221,11 +234,27 @@ export async function getItemIcons(
   itemIds: number[]
 ): Promise<Record<number, string>> {
   if (itemIds.length === 0) return {};
-  try {
-    return await getItemIconsViaSearch(itemIds);
-  } catch {
-    return getItemIconsViaItemEndpoint(itemIds);
+  const icons: Record<number, string> = {};
+  const unique = [...new Set(itemIds)];
+
+  for (let i = 0; i < unique.length; i += ITEM_DATA_BATCH_SIZE) {
+    const batch = unique.slice(i, i + ITEM_DATA_BATCH_SIZE);
+    try {
+      const { icons: batchIcons } = await fetchItemSheetNameIconV2(batch);
+      Object.assign(icons, batchIcons);
+    } catch {
+      const fb = await getItemIconsViaItemEndpoint(batch);
+      Object.assign(icons, fb);
+    }
   }
+
+  const missing = unique.filter((id) => !(id in icons));
+  if (missing.length > 0) {
+    const fb = await getItemIconsViaItemEndpoint(missing);
+    Object.assign(icons, fb);
+  }
+
+  return icons;
 }
 
 export async function getItemData(
@@ -234,10 +263,38 @@ export async function getItemData(
   names: Record<number, string>;
   icons: Record<number, string>;
 }> {
-  const [names, icons] = await Promise.all([
-    getItemNames(itemIds),
-    getItemIcons(itemIds),
-  ]);
+  if (itemIds.length === 0) return { names: {}, icons: {} };
+  const names: Record<number, string> = {};
+  const icons: Record<number, string> = {};
+  const unique = [...new Set(itemIds)];
+
+  for (let i = 0; i < unique.length; i += ITEM_DATA_BATCH_SIZE) {
+    const batch = unique.slice(i, i + ITEM_DATA_BATCH_SIZE);
+    try {
+      const batchData = await fetchItemSheetNameIconV2(batch);
+      Object.assign(names, batchData.names);
+      Object.assign(icons, batchData.icons);
+    } catch {
+      for (const id of batch) {
+        const n = await getItemName(id);
+        if (n) names[id] = n;
+      }
+      Object.assign(icons, await getItemIconsViaItemEndpoint(batch));
+    }
+  }
+
+  for (const id of unique) {
+    if (!(id in names) || !names[id]?.trim()) {
+      const n = await getItemName(id);
+      if (n) names[id] = n;
+    }
+  }
+
+  const missingIcons = unique.filter((id) => !(id in icons));
+  if (missingIcons.length > 0) {
+    Object.assign(icons, await getItemIconsViaItemEndpoint(missingIcons));
+  }
+
   return { names, icons };
 }
 

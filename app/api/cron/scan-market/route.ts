@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { runScanMarket } from "@/lib/scan-market";
+import { appendScanLog, createScanLoggerWithFile } from "@/lib/scan-logger";
 
 export async function GET(request: NextRequest) {
   const startedAt = Date.now();
@@ -23,20 +24,25 @@ export async function GET(request: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
 
+  const log = createScanLoggerWithFile();
+
   try {
-    const result = await runScanMarket((msg) => console.log(msg));
+    const result = await runScanMarket(log);
     const elapsedMs = Date.now() - startedAt;
-    console.log(
-      "[cron/scan-market] Scan finished OK",
-      JSON.stringify({ elapsedMs, ...result })
-    );
+    const summary = JSON.stringify({ elapsedMs, ...result });
+    console.log("[cron/scan-market] Scan finished OK", summary);
+    void appendScanLog(`[cron/scan-market] Scan finished OK ${summary}`);
     return Response.json({
       ok: true,
       ...result,
     });
   } catch (err) {
     const elapsedMs = Date.now() - startedAt;
+    const errMsg = err instanceof Error ? err.message : String(err);
     console.error("[cron/scan-market] Error after", elapsedMs, "ms:", err);
+    void appendScanLog(
+      `[cron/scan-market] Error after ${elapsedMs}ms: ${errMsg}`
+    );
     return Response.json(
       { error: err instanceof Error ? err.message : "Scan failed" },
       { status: 500 }

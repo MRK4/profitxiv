@@ -170,7 +170,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    fetch("https://api.github.com/repos/MRK4/profitxiv")
+    fetch("https://api.github.com/repos/clementpdr/profitxiv")
       .then((res) => res.json())
       .then((data) => {
         if (typeof data.stargazers_count === "number") {
@@ -189,7 +189,7 @@ export default function Home() {
         action: {
           label: "Star on GitHub",
           onClick: () =>
-            window.open("https://github.com/MRK4/profitxiv", "_blank"),
+            window.open("https://github.com/clementpdr/profitxiv", "_blank"),
         },
         duration: 8000,
       });

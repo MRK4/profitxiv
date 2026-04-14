@@ -140,7 +140,7 @@ export function Header({ githubStars, statusText, statusLoading }: HeaderProps) 
         <Tooltip>
           <TooltipTrigger asChild>
             <a
-              href="https://github.com/MRK4/profitxiv"
+              href="https://github.com/clementpdr/profitxiv"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors font-mono text-sm"

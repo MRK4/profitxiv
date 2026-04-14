@@ -44,3 +44,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# scan / cron file logs (content ignored; folder kept via logs/.gitkeep)
+logs/*.log
